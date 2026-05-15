@@ -1,7 +1,7 @@
 "use client"
 
 import type { ReactNode } from "react"
-import { useEffect } from "react"
+import { Suspense, useEffect } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 
 import { useAuth } from "@/hooks/use-auth"
@@ -13,7 +13,7 @@ function safeNextPath(value: string | null): string | null {
   return value
 }
 
-export function AuthRedirectIfAuthenticated({
+function AuthRedirectIfAuthenticatedInner({
   redirectTo,
   children,
 }: {
@@ -27,7 +27,7 @@ export function AuthRedirectIfAuthenticated({
   useEffect(() => {
     if (loading) return
     if (!user) return
-    const next = safeNextPath(searchParams?.get("next") ?? null)
+    const next = safeNextPath(searchParams.get("next"))
     router.replace(next ?? redirectTo)
   }, [loading, redirectTo, router, searchParams, user])
 
@@ -44,3 +44,18 @@ export function AuthRedirectIfAuthenticated({
   return <>{children}</>
 }
 
+export function AuthRedirectIfAuthenticated({
+  redirectTo,
+  children,
+}: {
+  redirectTo: string
+  children: ReactNode
+}) {
+  return (
+    <Suspense fallback={null}>
+      <AuthRedirectIfAuthenticatedInner redirectTo={redirectTo}>
+        {children}
+      </AuthRedirectIfAuthenticatedInner>
+    </Suspense>
+  )
+}
