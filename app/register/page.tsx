@@ -1,7 +1,7 @@
 import type { Metadata } from "next"
 import { Suspense } from "react"
 
-import { RegisterPageContent } from "@/components/register/register-page-content"
+import { RegisterPageClient } from "@/components/auth/register-page-client"
 import { APP_NAME } from "@/lib/constants"
 
 export const metadata: Metadata = {
@@ -12,7 +12,7 @@ export const metadata: Metadata = {
 export default function RegisterPage() {
   return (
     <Suspense fallback={null}>
-      <RegisterPageContent />
+      <RegisterPageClient />
     </Suspense>
   )
 }
