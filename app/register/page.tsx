@@ -1,5 +1,6 @@
 import type { Metadata } from "next"
 import Link from "next/link"
+import { Suspense } from "react"
 
 import { Navbar } from "@/components/navbar"
 import { AuthRedirectIfAuthenticated } from "@/components/auth-redirect"
@@ -18,7 +19,7 @@ export const metadata: Metadata = {
   description: `Create your ${APP_NAME} account.`,
 }
 
-export default function RegisterPage() {
+function RegisterShell() {
   return (
     <AuthRedirectIfAuthenticated redirectTo="/dashboard">
       <div className="flex min-h-full flex-col">
@@ -45,5 +46,19 @@ export default function RegisterPage() {
         </p>
       </div>
     </AuthRedirectIfAuthenticated>
+  )
+}
+
+export default function RegisterPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="flex min-h-[60vh] items-center justify-center text-sm text-muted-foreground">
+          Loading…
+        </div>
+      }
+    >
+      <RegisterShell />
+    </Suspense>
   )
 }
