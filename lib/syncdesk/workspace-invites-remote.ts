@@ -176,3 +176,13 @@ export function generateInviteToken(): string {
   }
   return Math.random().toString(36).slice(2) + Date.now().toString(36)
 }
+
+export async function fetchWorkspaceInvitePreview(client: SupabaseClient, token: string) {
+  const { data, error } = await client.rpc("get_workspace_invite_preview", {
+    p_token: token.trim(),
+  })
+  if (error) return { data: null, error }
+  const row = (Array.isArray(data) ? data[0] : data) as Record<string, unknown> | null
+  if (!row) return { data: null, error: null }
+  return { data: row, error: null }
+}

@@ -4,6 +4,13 @@ import { useRouter, useSearchParams } from "next/navigation"
 import { Suspense, useEffect } from "react"
 import { toast } from "sonner"
 
+import {
+  buildInvitePath,
+  clearAuthNextPath,
+  readAuthNextPath,
+  readPersistedInviteToken,
+  safeInternalPath,
+} from "@/lib/invite"
 import { getAuthErrorMessage } from "@/lib/auth-errors"
 import { getOptionalSupabaseClient } from "@/lib/supabase"
 
@@ -37,7 +44,14 @@ function AuthCallbackContent() {
           return
         }
         toast.success("Signed in with Google.")
-        router.replace("/dashboard")
+        const nextParam = searchParams.get("next")
+        const storedNext = readAuthNextPath()
+        const persistedToken = readPersistedInviteToken()
+        const destination = safeInternalPath(
+          nextParam ?? storedNext ?? (persistedToken ? buildInvitePath(persistedToken) : null)
+        )
+        clearAuthNextPath()
+        router.replace(destination)
         router.refresh()
       } catch (error) {
         if (cancelled) return

@@ -4,7 +4,7 @@ import type { FormEvent } from "react"
 import Link from "next/link"
 import { useRouter, useSearchParams } from "next/navigation"
 import { Loader2 } from "lucide-react"
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { toast } from "sonner"
 
 import { Button } from "@/components/ui/button"
@@ -19,21 +19,30 @@ import {
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import {
+  extractInviteTokenFromPath,
+  isInvitePath,
+  persistAuthNextPath,
+  persistInviteToken,
+  safeInternalPath,
+} from "@/lib/invite"
 import { getOptionalSupabaseClient, setRememberMePreference } from "@/lib/supabase"
 import { getAuthErrorMessage } from "@/lib/auth-errors"
 import { validateLogin } from "@/lib/auth-validation"
 import type { FieldErrors, LoginFormValues } from "@/types/auth"
 
-function safeNext(value: string | null): string {
-  if (!value) return "/dashboard"
-  if (!value.startsWith("/") || value.startsWith("//")) return "/dashboard"
-  return value
-}
-
 export function LoginForm() {
   const router = useRouter()
   const searchParams = useSearchParams()
-  const nextPath = safeNext(searchParams?.get("next") ?? null)
+  const nextPath = safeInternalPath(searchParams?.get("next") ?? null)
+
+  useEffect(() => {
+    persistAuthNextPath(nextPath)
+    if (isInvitePath(nextPath)) {
+      const token = extractInviteTokenFromPath(nextPath)
+      if (token) persistInviteToken(token)
+    }
+  }, [nextPath])
   const [values, setValues] = useState<LoginFormValues>({
     email: "",
     password: "",
@@ -100,10 +109,12 @@ export function LoginForm() {
         )
         return
       }
+      persistAuthNextPath(nextPath)
+      const callbackUrl = `${origin}/auth/callback?next=${encodeURIComponent(nextPath)}`
       const { error } = await client.auth.signInWithOAuth({
         provider: "google",
         options: {
-          redirectTo: `${origin}/auth/callback`,
+          redirectTo: callbackUrl,
         },
       })
       if (error) {
@@ -254,7 +265,14 @@ export function LoginForm() {
 
       <p className="text-center text-sm text-muted-foreground">
         No account?{" "}
-        <Link href="/register" className="font-medium text-primary underline-offset-4 hover:underline">
+        <Link
+          href={
+            nextPath !== "/dashboard"
+              ? `/register?next=${encodeURIComponent(nextPath)}`
+              : "/register"
+          }
+          className="font-medium text-primary underline-offset-4 hover:underline"
+        >
           Register
         </Link>
       </p>

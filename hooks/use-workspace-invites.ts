@@ -266,6 +266,7 @@ export function useResendWorkspaceInviteMutation(workspaceId: string) {
 export type { AcceptInviteResult } from "@/lib/syncdesk/workspace-invites-remote"
 
 export function useAcceptInviteMutation() {
+  const qc = useQueryClient()
   return useMutation<AcceptInviteResult, Error, string>({
     mutationFn: async (token) => {
       const client = getOptionalSupabaseClient()
@@ -277,8 +278,12 @@ export function useAcceptInviteMutation() {
       if (!data) throw new Error("Invitation could not be accepted.")
       return data
     },
-    onSuccess: async () => {
+    onSuccess: async (result) => {
       invalidateActivityFeed()
+      void qc.invalidateQueries({ queryKey: workspaceMembersKey(result.workspace_id) })
+      void qc.invalidateQueries({ queryKey: invitesKey(result.workspace_id) })
+      useBoardsStore.getState().setActiveWorkspaceId(result.workspace_id)
+
       const client = getOptionalSupabaseClient()
       if (!client) return
       const {

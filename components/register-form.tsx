@@ -2,15 +2,22 @@
 
 import type { FormEvent } from "react"
 import Link from "next/link"
-import { useRouter } from "next/navigation"
+import { useRouter, useSearchParams } from "next/navigation"
 import { Loader2 } from "lucide-react"
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { toast } from "sonner"
 
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import {
+  extractInviteTokenFromPath,
+  isInvitePath,
+  persistAuthNextPath,
+  persistInviteToken,
+  safeInternalPath,
+} from "@/lib/invite"
 import { getOptionalSupabaseClient } from "@/lib/supabase"
 import { getAuthErrorMessage } from "@/lib/auth-errors"
 import { validateRegister } from "@/lib/auth-validation"
@@ -18,13 +25,26 @@ import type { FieldErrors, RegisterFormValues } from "@/types/auth"
 
 export function RegisterForm() {
   const router = useRouter()
+  const searchParams = useSearchParams()
+  const nextPath = safeInternalPath(searchParams?.get("next") ?? null)
+  const inviteEmail = searchParams?.get("email")?.trim() ?? ""
+
   const [values, setValues] = useState<RegisterFormValues>({
     fullName: "",
-    email: "",
+    email: inviteEmail,
     password: "",
     confirmPassword: "",
     acceptTerms: false,
   })
+
+  useEffect(() => {
+    persistAuthNextPath(nextPath)
+    if (isInvitePath(nextPath)) {
+      const token = extractInviteTokenFromPath(nextPath)
+      if (token) persistInviteToken(token)
+    }
+  }, [nextPath])
+
   const [errors, setErrors] = useState<FieldErrors>({})
   const [loading, setLoading] = useState(false)
   const [redirecting, setRedirecting] = useState(false)
@@ -67,7 +87,7 @@ export function RegisterForm() {
         toast.success("Account created! Redirecting…")
         setRedirecting(true)
         setTimeout(() => {
-          router.push("/dashboard")
+          router.push(nextPath)
           router.refresh()
         }, 650)
         return
@@ -75,7 +95,11 @@ export function RegisterForm() {
 
       // If email confirmation is enabled, there won't be a session yet.
       toast.success("Check your email to confirm your account.")
-      router.push("/login")
+      const loginNext =
+        nextPath !== "/dashboard"
+          ? `/login?next=${encodeURIComponent(nextPath)}`
+          : "/login"
+      router.push(loginNext)
       router.refresh()
     } catch (error) {
       toast.error(getAuthErrorMessage(error))
@@ -205,7 +229,14 @@ export function RegisterForm() {
 
       <p className="text-center text-sm text-muted-foreground">
         Already have an account?{" "}
-        <Link href="/login" className="font-medium text-primary underline-offset-4 hover:underline">
+        <Link
+          href={
+            nextPath !== "/dashboard"
+              ? `/login?next=${encodeURIComponent(nextPath)}`
+              : "/login"
+          }
+          className="font-medium text-primary underline-offset-4 hover:underline"
+        >
           Login
         </Link>
       </p>

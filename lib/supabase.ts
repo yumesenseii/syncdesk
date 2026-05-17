@@ -63,3 +63,9 @@ export function getSupabaseClient(): SupabaseClient {
   }
   return createForPersist(env, getRememberPref())
 }
+
+/** Drop cached clients after clearing auth storage (e.g. invalid refresh token). */
+export function resetSupabaseClients(): void {
+  persistClient = null
+  sessionClient = null
+}

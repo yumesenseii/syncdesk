@@ -14,13 +14,8 @@ import {
   CardTitle,
 } from "@/components/ui/card"
 import { useAuth } from "@/hooks/use-auth"
+import { safeInternalPath } from "@/lib/invite"
 import { APP_NAME } from "@/lib/constants"
-
-function safeNextPath(value: string | null): string | null {
-  if (!value) return null
-  if (!value.startsWith("/") || value.startsWith("//")) return null
-  return value
-}
 
 /**
  * All client hooks for /register live here. The server page wraps this
@@ -34,8 +29,8 @@ export function RegisterPageClient() {
   useEffect(() => {
     if (loading) return
     if (!user) return
-    const next = safeNextPath(searchParams.get("next"))
-    router.replace(next ?? "/dashboard")
+    const next = searchParams.get("next")
+    router.replace(next ? safeInternalPath(next) : "/dashboard")
   }, [loading, router, searchParams, user])
 
   if (loading) {

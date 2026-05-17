@@ -7,6 +7,7 @@ import { toast } from "sonner"
 import { getAuthErrorMessage } from "@/lib/auth-errors"
 import { getFullNameFromMetadata } from "@/lib/user-profile"
 import { getOptionalSupabaseClient } from "@/lib/supabase"
+import { signOutSupabase } from "@/lib/supabase-session"
 import { useAuth } from "@/hooks/use-auth"
 
 export function useDashboardAuth() {
@@ -35,13 +36,7 @@ export function useDashboardAuth() {
     setLoggingOut(true)
     try {
       const client = getOptionalSupabaseClient()
-      if (client) {
-        const { error } = await client.auth.signOut()
-        if (error) {
-          toast.error(error.message)
-          return
-        }
-      }
+      await signOutSupabase(client)
       toast.success("You’ve been signed out.")
       router.replace("/login")
     } catch (error) {

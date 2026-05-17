@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react"
 import type { Session } from "@supabase/supabase-js"
 
+import { resolveClientSession } from "@/lib/supabase-session"
 import { getOptionalSupabaseClient } from "@/lib/supabase"
 
 export function useAuth() {
@@ -24,30 +25,32 @@ export function useAuth() {
       }
     }
 
-    const init = async () => {
-      try {
-        const { data } = await client.auth.getSession()
-        if (!isMounted) return
-        queueMicrotask(() => {
-          setSession(data.session ?? null)
-          setLoading(false)
-        })
-      } catch {
-        if (!isMounted) return
-        queueMicrotask(() => {
-          setSession(null)
-          setLoading(false)
-        })
-      }
+    const syncSession = async () => {
+      const { session: nextSession } = await resolveClientSession(client)
+      if (!isMounted) return
+      setSession(nextSession)
+      setLoading(false)
     }
 
-    void init()
+    void syncSession()
 
-    const { data } = client.auth.onAuthStateChange((_event, newSession) => {
+    const { data } = client.auth.onAuthStateChange((event, newSession) => {
       if (!isMounted) return
-      queueMicrotask(() => {
-        setSession(newSession ?? null)
-      })
+
+      if (event === "SIGNED_OUT") {
+        setSession(null)
+        setLoading(false)
+        return
+      }
+
+      if (newSession) {
+        setSession(newSession)
+        setLoading(false)
+        return
+      }
+
+      // Refresh may have failed — re-resolve (clears invalid tokens if needed).
+      void syncSession()
     })
 
     subscription = data.subscription
