@@ -25,6 +25,7 @@ import {
   type WorkspaceInviteRow,
 } from "@/lib/syncdesk/workspace-invites-remote"
 import { useWorkspaceCollaborationRealtime } from "@/hooks/use-workspace-collaboration-realtime"
+import { verifyWorkspaceMembership } from "@/lib/syncdesk/workspace-members-remote"
 import { getOptionalSupabaseClient } from "@/lib/supabase"
 import { useBoardsStore } from "@/stores/boards-store"
 
@@ -308,6 +309,32 @@ export function useAcceptInviteMutation() {
     onSuccess: async (result) => {
       invalidateActivityFeed()
       useBoardsStore.getState().setActiveWorkspaceId(result.workspace_id)
+
+      const client = getOptionalSupabaseClient()
+      if (client) {
+        const {
+          data: { user },
+        } = await client.auth.getUser()
+        if (user) {
+          const verified = await verifyWorkspaceMembership(
+            client,
+            result.workspace_id,
+            user.id
+          )
+          if (!verified) {
+            toast.error(
+              "Invitation accepted, but workspace membership could not be confirmed. Syncing again…"
+            )
+            console.error(
+              "[syncdesk] accept invite: workspace_members row missing for",
+              user.id,
+              "in",
+              result.workspace_id
+            )
+          }
+        }
+      }
+
       await refetchWorkspaceCollaboration(qc, result.workspace_id, { activity: true })
       await syncBoardsStoreFromRemote(result.workspace_id)
     },

@@ -1,6 +1,7 @@
 "use client"
 
-import { useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { AnimatePresence, motion } from "framer-motion"
 import {
   AlertTriangle,
   Bell,
@@ -15,7 +16,6 @@ import {
   MessageSquare,
   Paperclip,
   Plus,
-  Search,
   Send,
   Sparkles,
   Tag,
@@ -40,9 +40,12 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { Input } from "@/components/ui/input"
 import { Switch } from "@/components/ui/switch"
+import { TaskAssigneePicker } from "@/components/boards/task-assignee-picker"
 import { UserAvatar } from "@/components/ui/user-avatar"
 import { useAuth } from "@/hooks/use-auth"
 import { useProfile } from "@/hooks/use-profile"
+import { useWorkspaceMembersList } from "@/hooks/use-workspace-members"
+import type { TeamMember } from "@/lib/boards/types"
 import { buildTaskTimeline } from "@/lib/activity/task-timeline"
 import { DEFAULT_BOARD_SETTINGS } from "@/lib/boards/seed"
 import {
@@ -60,7 +63,7 @@ import type {
 } from "@/lib/boards/types"
 import { getFullNameFromMetadata } from "@/lib/user-profile"
 import { cn } from "@/lib/utils"
-import { getWorkspaceMembers, useBoardsStore } from "@/stores/boards-store"
+import { useBoardsStore } from "@/stores/boards-store"
 
 const PRIORITIES: { id: TaskPriority; tone: string; dot: string }[] = [
   { id: "Low", tone: "bg-emerald-500/10 text-emerald-700", dot: "bg-emerald-500" },
@@ -193,16 +196,14 @@ function BoardTaskDialogBody({
   onOpenChange: (open: boolean) => void
 }) {
   const teamMembers = useBoardsStore((s) => s.teamMembers)
-  const workspaces = useBoardsStore((s) => s.workspaces)
   const board = useBoardsStore((s) => s.boardsById[boardId])
-  const workspace = useMemo(
-    () => workspaces.find((w) => w.id === board?.workspaceId) ?? null,
-    [workspaces, board?.workspaceId]
-  )
-  const workspaceMembers = useMemo(
-    () => (workspace ? getWorkspaceMembers(workspace, teamMembers) : []),
-    [workspace, teamMembers]
-  )
+  const workspaceId = board?.workspaceId ?? null
+  const {
+    members: workspaceMembers,
+    isLoading: membersLoading,
+    isFetching: membersFetching,
+  } = useWorkspaceMembersList(workspaceId)
+  const assigneesLoading = membersLoading || (membersFetching && workspaceMembers.length === 0)
   const addTask = useBoardsStore((s) => s.addTask)
   const updateTask = useBoardsStore((s) => s.updateTask)
   const removeTask = useBoardsStore((s) => s.removeTask)
@@ -210,7 +211,25 @@ function BoardTaskDialogBody({
   const { data: myProfile } = useProfile(user?.id)
 
   const settings = board?.settings ?? DEFAULT_BOARD_SETTINGS
-  const teamById = useMemo(() => new Map(teamMembers.map((m) => [m.id, m])), [teamMembers])
+  const teamById = useMemo(() => {
+    const map = new Map(teamMembers.map((m) => [m.id, m]))
+    for (const m of workspaceMembers) map.set(m.id, m)
+    if (task) {
+      for (const a of task.assignees) {
+        if (!map.has(a.id)) {
+          map.set(a.id, {
+            id: a.id,
+            userId: a.id,
+            name: a.name,
+            initials: a.initials,
+            color: a.color,
+            avatarUrl: a.avatarUrl,
+          })
+        }
+      }
+    }
+    return map
+  }, [teamMembers, workspaceMembers, task])
 
   const seed = useMemo(() => {
     if (mode === "edit" && task) {
@@ -304,10 +323,29 @@ function BoardTaskDialogBody({
     }
   }, [workspaceMembers, teamMembers, user, myProfile?.avatar_url])
 
+  const assigneeOptions = useMemo(() => {
+    const map = new Map(workspaceMembers.map((m) => [m.id, m]))
+    if (mode === "edit" && task) {
+      for (const a of task.assignees) {
+        if (!map.has(a.id)) {
+          map.set(a.id, {
+            id: a.id,
+            userId: a.id,
+            name: a.name,
+            initials: a.initials,
+            color: a.color,
+            avatarUrl: a.avatarUrl,
+          })
+        }
+      }
+    }
+    return [...map.values()]
+  }, [workspaceMembers, mode, task])
+
   const assigneesPayload = useMemo(() => {
-    const set = new Set(assigneeIds)
-    return workspaceMembers
-      .filter((m) => set.has(m.id))
+    return assigneeIds
+      .map((id) => teamById.get(id))
+      .filter((m): m is TeamMember => Boolean(m))
       .map((m) => ({
         id: m.id,
         name: m.name,
@@ -315,18 +353,7 @@ function BoardTaskDialogBody({
         color: m.color,
         avatarUrl: m.avatarUrl,
       }))
-  }, [assigneeIds, workspaceMembers])
-
-  const filteredMembers = useMemo(() => {
-    const q = assigneeQuery.trim().toLowerCase()
-    if (!q) return workspaceMembers
-    return workspaceMembers.filter(
-      (m) =>
-        m.name.toLowerCase().includes(q) ||
-        m.initials.toLowerCase().includes(q) ||
-        (m.email?.toLowerCase().includes(q) ?? false)
-    )
-  }, [workspaceMembers, assigneeQuery])
+  }, [assigneeIds, teamById])
 
   const toggleAssignee = (id: string) => {
     setAssigneeIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]))
@@ -928,68 +955,14 @@ function BoardTaskDialogBody({
                 )}
               </section>
 
-              <section className="space-y-2">
-                <div className="flex items-center justify-between gap-2">
-                  <SectionLabel icon={Bell}>Assignees</SectionLabel>
-                  <span className="text-[10px] tabular-nums text-muted-foreground">
-                    {assigneeIds.length} selected
-                  </span>
-                </div>
-                <div className="relative">
-                  <Search
-                    className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground"
-                    aria-hidden
-                  />
-                  <Input
-                    value={assigneeQuery}
-                    onChange={(e) => setAssigneeQuery(e.target.value)}
-                    placeholder="Search teammates"
-                    className="h-9 rounded-lg border-border/70 bg-card pl-8"
-                    aria-label="Search assignees"
-                  />
-                </div>
-                <ul className="max-h-44 space-y-1 overflow-y-auto rounded-lg border border-border/60 bg-card p-1">
-                  {filteredMembers.length === 0 ? (
-                    <li className="px-2 py-3 text-center text-xs text-muted-foreground">
-                      No matches.
-                    </li>
-                  ) : (
-                    filteredMembers.map((m) => {
-                      const selected = assigneeIds.includes(m.id)
-                      return (
-                        <li key={m.id}>
-                          <button
-                            type="button"
-                            onClick={() => toggleAssignee(m.id)}
-                            aria-pressed={selected}
-                            className={cn(
-                              "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors",
-                              selected
-                                ? "bg-primary/[0.08] text-foreground"
-                                : "hover:bg-muted/40"
-                            )}
-                          >
-                            <UserAvatar
-                              name={m.name}
-                              initials={m.initials}
-                              avatarUrl={m.avatarUrl}
-                              color={m.color}
-                              size="sm"
-                              ringClassName=""
-                            />
-                            <span className="min-w-0 flex-1 truncate text-sm font-medium">
-                              {m.name}
-                            </span>
-                            {selected ? (
-                              <Check className="size-4 shrink-0 text-primary" aria-hidden />
-                            ) : null}
-                          </button>
-                        </li>
-                      )
-                    })
-                  )}
-                </ul>
-              </section>
+              <TaskAssigneePicker
+                  members={assigneeOptions}
+                  isLoading={assigneesLoading}
+                  assigneeIds={assigneeIds}
+                  assigneeQuery={assigneeQuery}
+                  onAssigneeQueryChange={setAssigneeQuery}
+                  onToggleAssignee={toggleAssignee}
+              />
 
               <section className="space-y-1.5">
                 <SectionLabel icon={Bell}>Notifications</SectionLabel>

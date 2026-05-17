@@ -24,9 +24,10 @@ import {
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { UserAvatar } from "@/components/ui/user-avatar"
+import { useWorkspaceMembersList } from "@/hooks/use-workspace-members"
 import type { BoardMeta, TeamMember, WorkspaceEntity } from "@/lib/boards/types"
 import { cn } from "@/lib/utils"
-import { getWorkspaceMembers, useBoardsStore } from "@/stores/boards-store"
+import { useBoardsStore } from "@/stores/boards-store"
 
 const MAX_AVATARS = 4
 
@@ -71,15 +72,12 @@ export function BoardHeader({
   workspace: WorkspaceEntity
 }) {
   const router = useRouter()
-  const teamMembers = useBoardsStore((s) => s.teamMembers)
   const renameBoard = useBoardsStore((s) => s.renameBoard)
   const updateBoardMeta = useBoardsStore((s) => s.updateBoardMeta)
   const deleteBoard = useBoardsStore((s) => s.deleteBoard)
 
-  const members = useMemo(
-    () => getWorkspaceMembers(workspace, teamMembers),
-    [workspace, teamMembers]
-  )
+  const { members, isLoading: membersLoading, isError: membersError, error: membersLoadError } =
+    useWorkspaceMembersList(workspace.id)
 
   const [membersOpen, setMembersOpen] = useState(false)
   const [shareOpen, setShareOpen] = useState(false)
@@ -201,6 +199,9 @@ export function BoardHeader({
       <BoardMembersDialog
         workspace={workspace}
         boardName={board.name}
+        members={members}
+        isLoading={membersLoading}
+        loadError={membersError ? membersLoadError?.message : null}
         open={membersOpen}
         onOpenChange={setMembersOpen}
       />

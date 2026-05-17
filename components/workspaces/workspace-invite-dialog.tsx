@@ -603,6 +603,7 @@ export function WorkspaceInviteDialog({
               members={workspaceMembers}
               recentlyJoined={recentlyJoined}
               isLoading={membersQuery.isPending}
+              loadError={membersQuery.isError ? membersQuery.error?.message : null}
               supabaseConfigured={supabaseConfigured}
             />
           </aside>
@@ -877,11 +878,13 @@ function MembersSection({
   members,
   recentlyJoined,
   isLoading,
+  loadError,
   supabaseConfigured,
 }: {
   members: TeamMember[]
   recentlyJoined: TeamMember[]
   isLoading: boolean
+  loadError?: string | null
   supabaseConfigured: boolean
 }) {
   return (
@@ -899,6 +902,11 @@ function MembersSection({
         <EmptyHint
           icon={<Users className="size-3.5 text-muted-foreground" aria-hidden />}
           body="Connect Supabase to load workspace members."
+        />
+      ) : loadError ? (
+        <EmptyHint
+          icon={<Users className="size-3.5 text-rose-500" aria-hidden />}
+          body={loadError}
         />
       ) : isLoading ? (
         <div className="flex items-center justify-center rounded-lg border border-dashed border-border/60 bg-background/60 px-2 py-3 text-[11px] text-muted-foreground">

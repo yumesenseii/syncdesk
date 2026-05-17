@@ -1,5 +1,6 @@
 "use client"
 
+import { useMemo } from "react"
 import { useQuery } from "@tanstack/react-query"
 
 import type { TeamMember } from "@/lib/boards/types"
@@ -41,4 +42,33 @@ export function useWorkspaceMembersQuery(
 /** @deprecated Prefer `useWorkspaceCollaborationRealtime` — kept for existing call sites. */
 export function useWorkspaceMembersRealtime(workspaceId: string | null | undefined) {
   useWorkspaceCollaborationRealtime(workspaceId)
+}
+
+function dedupeMembers(list: TeamMember[]): TeamMember[] {
+  const seen = new Set<string>()
+  return list.filter((m) => {
+    if (seen.has(m.id)) return false
+    seen.add(m.id)
+    return true
+  })
+}
+
+/**
+ * Workspace roster from `workspace_members` with realtime sync.
+ * Shared by invite modal, board members dialog, and task assignee picker.
+ */
+export function useWorkspaceMembersList(workspaceId: string | null | undefined) {
+  useWorkspaceCollaborationRealtime(workspaceId)
+  const query = useWorkspaceMembersQuery(workspaceId)
+
+  const members = useMemo(() => dedupeMembers(query.data ?? []), [query.data])
+
+  return {
+    members,
+    isLoading: query.isPending && members.length === 0,
+    isFetching: query.isFetching,
+    isError: query.isError,
+    error: query.error,
+    refetch: query.refetch,
+  }
 }
