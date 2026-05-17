@@ -1,11 +1,15 @@
 "use client"
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { useEffect } from "react"
 import { toast } from "sonner"
 
 import { invalidateActivityFeed } from "@/lib/activity/activity-invalidation"
 import { isEmailJsConfigured, sendWorkspaceInviteEmail } from "@/lib/email"
+import {
+  refetchWorkspaceCollaboration,
+  syncBoardsStoreFromRemote,
+} from "@/lib/syncdesk/workspace-collaboration-sync"
+import { workspaceInvitesKey } from "@/lib/syncdesk/workspace-collaboration-keys"
 import {
   buildInviteAcceptUrl,
   callAcceptInvite,
@@ -20,20 +24,23 @@ import {
   type WorkspaceInviteRole,
   type WorkspaceInviteRow,
 } from "@/lib/syncdesk/workspace-invites-remote"
-import { workspaceMembersKey } from "@/hooks/use-workspace-members"
-import { pullRemoteBoardsState } from "@/lib/syncdesk/boards-remote-sync"
+import { useWorkspaceCollaborationRealtime } from "@/hooks/use-workspace-collaboration-realtime"
 import { getOptionalSupabaseClient } from "@/lib/supabase"
 import { useBoardsStore } from "@/stores/boards-store"
-import { subscribeToPostgresChanges } from "@/lib/supabase/realtime/create-channel"
 
-const invitesKey = (workspaceId: string) => ["workspace-invites", workspaceId] as const
+export { workspaceInvitesKey } from "@/lib/syncdesk/workspace-collaboration-keys"
 
-export function useWorkspaceInvitesQuery(workspaceId: string | null | undefined) {
+export function useWorkspaceInvitesQuery(
+  workspaceId: string | null | undefined,
+  options?: { enabled?: boolean }
+) {
   return useQuery<WorkspaceInviteRow[]>({
-    queryKey: invitesKey(workspaceId ?? "none"),
-    enabled: Boolean(workspaceId && getOptionalSupabaseClient()),
-    staleTime: 5_000,
+    queryKey: workspaceInvitesKey(workspaceId ?? "none"),
+    enabled: Boolean(workspaceId && getOptionalSupabaseClient() && options?.enabled !== false),
+    staleTime: 0,
+    gcTime: 5 * 60_000,
     refetchOnMount: "always",
+    placeholderData: (previous) => previous,
     queryFn: async () => {
       const client = getOptionalSupabaseClient()
       if (!client || !workspaceId) return []
@@ -51,35 +58,27 @@ export function useWorkspaceInvitesQuery(workspaceId: string | null | undefined)
   })
 }
 
-/**
- * Subscribe to realtime changes on workspace_invites for the given workspace so the
- * UI refreshes instantly when invites are sent / accepted / revoked from another tab.
- *
- * Uses a uniquified channel topic so multiple components in the same tree (e.g. the
- * workspace header AND the invite dialog) can subscribe at the same time without
- * tripping Supabase's "cannot add postgres_changes callbacks after subscribe()" guard.
- */
-export function useWorkspaceInvitesRealtime(workspaceId: string | null | undefined) {
-  const qc = useQueryClient()
-  useEffect(() => {
-    const client = getOptionalSupabaseClient()
-    if (!client || !workspaceId) return
-    return subscribeToPostgresChanges(client, {
-      topic: `workspace_invites:${workspaceId}`,
-      bindings: [
-        {
-          event: "*",
-          schema: "public",
-          table: "workspace_invites",
-          filter: `workspace_id=eq.${workspaceId}`,
-        },
-      ],
-      onChange: () => {
-        void qc.invalidateQueries({ queryKey: invitesKey(workspaceId) })
-        void qc.invalidateQueries({ queryKey: workspaceMembersKey(workspaceId) })
-      },
-    })
-  }, [qc, workspaceId])
+function mergeInvites(
+  current: WorkspaceInviteRow[] | undefined,
+  incoming: WorkspaceInviteRow[]
+): WorkspaceInviteRow[] {
+  const map = new Map<string, WorkspaceInviteRow>()
+  for (const row of current ?? []) {
+    map.set(row.id, row)
+  }
+  for (const row of incoming) {
+    map.set(row.id, row)
+  }
+  return Array.from(map.values()).sort(
+    (a, b) => Date.parse(b.created_at) - Date.parse(a.created_at)
+  )
+}
+
+function upsertInvite(
+  current: WorkspaceInviteRow[] | undefined,
+  row: WorkspaceInviteRow
+): WorkspaceInviteRow[] {
+  return mergeInvites(current, [row])
 }
 
 export interface SendInvitesInput {
@@ -98,7 +97,6 @@ export interface SendInvitesResult {
   created: WorkspaceInviteRow[]
   failed: { email: string; reason: string }[]
   emailDelivered: number
-  /** Invites saved in DB but EmailJS could not send email */
   emailFailures: { email: string; reason: string }[]
 }
 
@@ -201,12 +199,17 @@ export function useSendWorkspaceInvitesMutation(workspaceId: string) {
 
       return { created, failed, emailDelivered, emailFailures }
     },
-    onSettled: () => {
-      void qc.invalidateQueries({ queryKey: invitesKey(workspaceId) })
-      void qc.invalidateQueries({ queryKey: workspaceMembersKey(workspaceId) })
-    },
-    onSuccess: () => {
+    onSuccess: (result) => {
+      if (result.created.length > 0) {
+        qc.setQueryData<WorkspaceInviteRow[]>(workspaceInvitesKey(workspaceId), (prev) =>
+          mergeInvites(prev, result.created)
+        )
+      }
+      void refetchWorkspaceCollaboration(qc, workspaceId, { activity: true })
       invalidateActivityFeed()
+    },
+    onSettled: () => {
+      void refetchWorkspaceCollaboration(qc, workspaceId)
     },
     onError: (err) => {
       toast.error(err.message)
@@ -214,9 +217,11 @@ export function useSendWorkspaceInvitesMutation(workspaceId: string) {
   })
 }
 
+type RevokeInviteContext = { previous: WorkspaceInviteRow[] | undefined }
+
 export function useRevokeWorkspaceInviteMutation(workspaceId: string) {
   const qc = useQueryClient()
-  return useMutation<WorkspaceInviteRow, Error, string>({
+  return useMutation<WorkspaceInviteRow, Error, string, RevokeInviteContext>({
     mutationFn: async (inviteId) => {
       const client = getOptionalSupabaseClient()
       if (!client) throw new Error("Supabase is not configured.")
@@ -224,11 +229,31 @@ export function useRevokeWorkspaceInviteMutation(workspaceId: string) {
       if (error || !data) throw new Error(error?.message ?? "Failed to revoke invitation.")
       return data as WorkspaceInviteRow
     },
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: invitesKey(workspaceId) })
-      void qc.invalidateQueries({ queryKey: workspaceMembersKey(workspaceId) })
+    onMutate: async (inviteId) => {
+      await qc.cancelQueries({ queryKey: workspaceInvitesKey(workspaceId) })
+      const previous = qc.getQueryData<WorkspaceInviteRow[]>(workspaceInvitesKey(workspaceId))
+      qc.setQueryData<WorkspaceInviteRow[]>(workspaceInvitesKey(workspaceId), (prev) =>
+        (prev ?? []).map((row) =>
+          row.id === inviteId ? { ...row, status: "revoked" as const } : row
+        )
+      )
+      return { previous }
     },
-    onError: (err) => toast.error(err.message),
+    onError: (err, _id, context) => {
+      if (context?.previous) {
+        qc.setQueryData(workspaceInvitesKey(workspaceId), context.previous)
+      }
+      toast.error(err.message)
+    },
+    onSuccess: (row) => {
+      qc.setQueryData<WorkspaceInviteRow[]>(workspaceInvitesKey(workspaceId), (prev) =>
+        upsertInvite(prev, row)
+      )
+      void refetchWorkspaceCollaboration(qc, workspaceId, { activity: true })
+    },
+    onSettled: () => {
+      void refetchWorkspaceCollaboration(qc, workspaceId)
+    },
   })
 }
 
@@ -254,9 +279,11 @@ export function useResendWorkspaceInviteMutation(workspaceId: string) {
       }
       return row
     },
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: invitesKey(workspaceId) })
-      void qc.invalidateQueries({ queryKey: workspaceMembersKey(workspaceId) })
+    onSuccess: (row) => {
+      qc.setQueryData<WorkspaceInviteRow[]>(workspaceInvitesKey(workspaceId), (prev) =>
+        upsertInvite(prev, row)
+      )
+      void refetchWorkspaceCollaboration(qc, workspaceId)
       toast.success("Invitation email sent.")
     },
     onError: (err) => toast.error(err.message),
@@ -280,25 +307,14 @@ export function useAcceptInviteMutation() {
     },
     onSuccess: async (result) => {
       invalidateActivityFeed()
-      void qc.invalidateQueries({ queryKey: workspaceMembersKey(result.workspace_id) })
-      void qc.invalidateQueries({ queryKey: invitesKey(result.workspace_id) })
       useBoardsStore.getState().setActiveWorkspaceId(result.workspace_id)
-
-      const client = getOptionalSupabaseClient()
-      if (!client) return
-      const {
-        data: { user },
-      } = await client.auth.getUser()
-      if (!user) return
-      const bundle = await pullRemoteBoardsState(client, user.id)
-      if (bundle) {
-        useBoardsStore.setState({
-          workspaces: bundle.workspaces,
-          boardsById: bundle.boardsById,
-          tasksByBoardId: bundle.tasksByBoardId,
-          teamMembers: bundle.teamMembers,
-        })
-      }
+      await refetchWorkspaceCollaboration(qc, result.workspace_id, { activity: true })
+      await syncBoardsStoreFromRemote(result.workspace_id)
     },
   })
+}
+
+/** @deprecated Prefer `useWorkspaceCollaborationRealtime` — kept for existing call sites. */
+export function useWorkspaceInvitesRealtime(workspaceId: string | null | undefined) {
+  useWorkspaceCollaborationRealtime(workspaceId)
 }

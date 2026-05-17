@@ -41,14 +41,12 @@ import { useAuth } from "@/hooks/use-auth"
 import {
   isRecentlyJoined,
   useWorkspaceMembersQuery,
-  useWorkspaceMembersRealtime,
 } from "@/hooks/use-workspace-members"
 import {
   useResendWorkspaceInviteMutation,
   useRevokeWorkspaceInviteMutation,
   useSendWorkspaceInvitesMutation,
   useWorkspaceInvitesQuery,
-  useWorkspaceInvitesRealtime,
 } from "@/hooks/use-workspace-invites"
 import type { TeamMember, WorkspaceEntity } from "@/lib/boards/types"
 import { isEmailJsConfigured } from "@/lib/email"
@@ -157,14 +155,11 @@ export function WorkspaceInviteDialog({
   const { user } = useAuth()
   const supabaseConfigured = Boolean(getOptionalSupabaseClient())
   const emailConfigured = isEmailJsConfigured()
-  const invitesQuery = useWorkspaceInvitesQuery(open ? workspace.id : undefined)
-  const membersQuery = useWorkspaceMembersQuery(open ? workspace.id : undefined)
+  const invitesQuery = useWorkspaceInvitesQuery(workspace.id, { enabled: open })
+  const membersQuery = useWorkspaceMembersQuery(workspace.id, { enabled: open })
   const sendMutation = useSendWorkspaceInvitesMutation(workspace.id)
   const revokeMutation = useRevokeWorkspaceInviteMutation(workspace.id)
   const resendMutation = useResendWorkspaceInviteMutation(workspace.id)
-
-  useWorkspaceInvitesRealtime(open ? workspace.id : undefined)
-  useWorkspaceMembersRealtime(open ? workspace.id : undefined)
 
   const [chips, setChips] = useState<InviteChip[]>([])
   const [draft, setDraft] = useState("")
@@ -172,7 +167,15 @@ export function WorkspaceInviteDialog({
   const [message, setMessage] = useState("")
   const inputRef = useRef<HTMLInputElement | null>(null)
 
-  const workspaceMembers = membersQuery.data ?? []
+  const workspaceMembers = useMemo(() => {
+    const list = membersQuery.data ?? []
+    const seen = new Set<string>()
+    return list.filter((m) => {
+      if (seen.has(m.id)) return false
+      seen.add(m.id)
+      return true
+    })
+  }, [membersQuery.data])
 
   const memberSet = useMemo(
     () => new Set(workspaceMembers.map((m) => m.id)),
@@ -776,10 +779,19 @@ function PendingInvitesSection({
         />
       ) : (
         <ul className="divide-y divide-border/50 overflow-hidden rounded-xl border border-border/60 bg-background/70">
+          <AnimatePresence initial={false}>
           {invites.map((inv) => {
             const expired = isInviteExpired(inv)
             return (
-            <li key={inv.id} className="group/inv flex items-center gap-2 px-2.5 py-2">
+            <motion.li
+              key={inv.id}
+              layout
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: "auto" }}
+              exit={{ opacity: 0, height: 0 }}
+              transition={{ duration: 0.18 }}
+              className="group/inv flex items-center gap-2 px-2.5 py-2"
+            >
               <span
                 className={cn(
                   "flex size-7 shrink-0 items-center justify-center rounded-full ring-1",
@@ -851,9 +863,10 @@ function PendingInvitesSection({
                   )}
                 </Button>
               </div>
-            </li>
+            </motion.li>
             )
           })}
+          </AnimatePresence>
         </ul>
       )}
     </section>
@@ -898,8 +911,17 @@ function MembersSection({
         />
       ) : (
         <ul className="divide-y divide-border/50 overflow-hidden rounded-xl border border-border/60 bg-background/70">
+          <AnimatePresence initial={false}>
           {members.map((m) => (
-            <li key={m.id} className="flex items-center gap-2.5 px-2.5 py-2">
+            <motion.li
+              key={m.id}
+              layout
+              initial={{ opacity: 0, y: 6 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -6 }}
+              transition={{ duration: 0.18 }}
+              className="flex items-center gap-2.5 px-2.5 py-2"
+            >
               <UserAvatar
                 name={m.name}
                 initials={m.initials}
@@ -921,8 +943,9 @@ function MembersSection({
                   {formatJoinedAt(m.joinedAt)}
                 </p>
               </div>
-            </li>
+            </motion.li>
           ))}
+          </AnimatePresence>
         </ul>
       )}
       {recentlyJoined.length > 0 ? (

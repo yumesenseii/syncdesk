@@ -16,10 +16,7 @@ import { useMemo } from "react"
 import { Button } from "@/components/ui/button"
 import { UserAvatar } from "@/components/ui/user-avatar"
 import { Card } from "@/components/ui/card"
-import {
-  useWorkspaceInvitesQuery,
-  useWorkspaceInvitesRealtime,
-} from "@/hooks/use-workspace-invites"
+import { useWorkspaceInvitesQuery } from "@/hooks/use-workspace-invites"
 import { cn } from "@/lib/utils"
 import {
   healthAccent,
@@ -35,7 +32,6 @@ export function WorkspaceHeader({
 }) {
   const { workspace, members, totalTasks, completedTasks, overdueTasks, completionPct, health, boards } = metrics
 
-  useWorkspaceInvitesRealtime(workspace.id)
   const invitesQuery = useWorkspaceInvitesQuery(workspace.id)
   const pendingInvites = useMemo(
     () => (invitesQuery.data ?? []).filter((i) => i.status === "pending").length,

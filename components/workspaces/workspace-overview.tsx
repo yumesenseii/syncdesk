@@ -11,6 +11,9 @@ import { WorkspaceContribution } from "@/components/workspaces/workspace-contrib
 import { WorkspaceHeader } from "@/components/workspaces/workspace-header"
 import { WorkspaceInviteDialog } from "@/components/workspaces/workspace-invite-dialog"
 import { WorkspaceProductivity } from "@/components/workspaces/workspace-productivity"
+import { useWorkspaceCollaborationRealtime } from "@/hooks/use-workspace-collaboration-realtime"
+import { useWorkspaceInvitesQuery } from "@/hooks/use-workspace-invites"
+import { useWorkspaceMembersQuery } from "@/hooks/use-workspace-members"
 import { computeWorkspaceMetrics } from "@/lib/workspaces/workspace-metrics"
 import { getWorkspaceByIdOrSlug, useBoardsStore } from "@/stores/boards-store"
 
@@ -25,6 +28,10 @@ export function WorkspaceOverview({ workspaceId }: { workspaceId: string }) {
     [workspaces, workspaceId]
   )
   const setActiveWorkspaceId = useBoardsStore((s) => s.setActiveWorkspaceId)
+
+  useWorkspaceCollaborationRealtime(workspace?.id)
+  useWorkspaceInvitesQuery(workspace?.id)
+  useWorkspaceMembersQuery(workspace?.id)
 
   useEffect(() => {
     if (workspace) setActiveWorkspaceId(workspace.id)

@@ -369,6 +369,7 @@ export function subscribeBoardsRealtime(
       { event: "*", schema: "public", table: "workspaces", filter: `owner_id=eq.${userId}` },
       // No user_id filter: RLS limits events to rows in workspaces the user can see.
       { event: "*", schema: "public", table: "workspace_members" },
+      { event: "*", schema: "public", table: "workspace_invites" },
       { event: "*", schema: "public", table: "boards" },
       { event: "*", schema: "public", table: "board_tasks" },
     ],
