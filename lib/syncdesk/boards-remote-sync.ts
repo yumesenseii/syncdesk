@@ -7,7 +7,6 @@ import type {
   BoardTask,
   KanbanColumnId,
   TaskChecklistItem,
-  TaskComment,
   TeamMember,
   WorkspaceEntity,
 } from "@/lib/boards/types"
@@ -146,9 +145,6 @@ function parseTimestamp(value: string | null | undefined): number | undefined {
 function mapTask(r: DbTask): BoardTask {
   const columnId = isKanbanColumnId(r.column_id) ? r.column_id : "todo"
   const checklist = Array.isArray(r.checklist) ? (r.checklist as TaskChecklistItem[]) : []
-  const taskComments = Array.isArray(r.task_comments)
-    ? (r.task_comments as TaskComment[])
-    : []
   return {
     id: r.id,
     title: r.title,
@@ -158,7 +154,7 @@ function mapTask(r: DbTask): BoardTask {
     priority: r.priority as BoardTask["priority"],
     due: r.due,
     overdue: r.overdue,
-    comments: taskComments.length > 0 ? taskComments.length : r.comments_count,
+    comments: r.comments_count,
     attachments: r.attachments_count,
     assignees: Array.isArray(r.assignees) ? (r.assignees as BoardTask["assignees"]) : [],
     progress: r.progress,
@@ -166,13 +162,11 @@ function mapTask(r: DbTask): BoardTask {
     completedAt: parseTimestamp(r.completed_at),
     sortOrder: typeof r.sort_order === "number" ? r.sort_order : 0,
     checklist,
-    taskComments,
     updatedAt: parseTimestamp(r.updated_at),
   }
 }
 
 function serializeTaskInsertRow(task: Omit<BoardTask, "id">, userId: string, boardId: string) {
-  const comments = task.taskComments ?? []
   return {
     user_id: userId,
     board_id: boardId,
@@ -183,13 +177,12 @@ function serializeTaskInsertRow(task: Omit<BoardTask, "id">, userId: string, boa
     priority: task.priority,
     due: task.due,
     overdue: task.overdue,
-    comments_count: comments.length || task.comments,
+    comments_count: task.comments ?? 0,
     attachments_count: task.attachments,
     assignees: task.assignees,
     progress: task.progress,
     sort_order: task.sortOrder ?? 0,
     checklist: task.checklist ?? [],
-    task_comments: comments,
     updated_at: new Date().toISOString(),
     ...serializeTaskTimestamps(task),
   }

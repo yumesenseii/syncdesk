@@ -97,6 +97,9 @@ export interface BoardsState {
     beforeTaskId?: string | null
   ) => void
   updateTask: (boardId: string, taskId: string, patch: Partial<Omit<BoardTask, "id">>) => void
+  /** Local-only task patch (no remote sync) — used for live comment counts. */
+  patchTaskLocal: (boardId: string, taskId: string, patch: Partial<Omit<BoardTask, "id">>) => void
+  findBoardIdForTask: (taskId: string) => string | null
   addTask: (boardId: string, task: Omit<BoardTask, "id">) => void
   removeTask: (boardId: string, taskId: string) => void
 }
@@ -657,6 +660,27 @@ export const useBoardsStore = create<BoardsState>()(
             )
           }
         })
+      },
+
+      patchTaskLocal: (boardId, taskId, patch) => {
+        set((s) => {
+          const list = s.tasksByBoardId[boardId]
+          if (!list) return s
+          return {
+            tasksByBoardId: {
+              ...s.tasksByBoardId,
+              [boardId]: list.map((t) => (t.id === taskId ? { ...t, ...patch } : t)),
+            },
+          }
+        })
+      },
+
+      findBoardIdForTask: (taskId) => {
+        const { tasksByBoardId } = get()
+        for (const [boardId, tasks] of Object.entries(tasksByBoardId)) {
+          if (tasks.some((t) => t.id === taskId)) return boardId
+        }
+        return null
       },
 
       updateTask: (boardId, taskId, patch) => {

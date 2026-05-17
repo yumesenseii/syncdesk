@@ -44,7 +44,13 @@ import { TaskAssigneePicker } from "@/components/boards/task-assignee-picker"
 import { UserAvatar } from "@/components/ui/user-avatar"
 import { useAuth } from "@/hooks/use-auth"
 import { useProfile } from "@/hooks/use-profile"
+import {
+  useInsertTaskComment,
+  useTaskCommentsQuery,
+  useTaskCommentsRealtime,
+} from "@/hooks/use-task-comments"
 import { useWorkspaceMembersList } from "@/hooks/use-workspace-members"
+import { formatRelativeTime } from "@/lib/notifications/format-relative-time"
 import type { TeamMember } from "@/lib/boards/types"
 import { buildTaskTimeline } from "@/lib/activity/task-timeline"
 import { DEFAULT_BOARD_SETTINGS } from "@/lib/boards/seed"
@@ -197,7 +203,12 @@ function BoardTaskDialogBody({
 }) {
   const teamMembers = useBoardsStore((s) => s.teamMembers)
   const board = useBoardsStore((s) => s.boardsById[boardId])
+  const workspaces = useBoardsStore((s) => s.workspaces)
   const workspaceId = board?.workspaceId ?? null
+  const workspace = useMemo(
+    () => workspaces.find((w) => w.id === workspaceId) ?? null,
+    [workspaces, workspaceId]
+  )
   const {
     members: workspaceMembers,
     isLoading: membersLoading,
@@ -233,20 +244,6 @@ function BoardTaskDialogBody({
 
   const seed = useMemo(() => {
     if (mode === "edit" && task) {
-      const storedComments: CommentEntry[] = (task.taskComments ?? []).map((c) => ({
-        id: c.id,
-        author: c.authorName,
-        initials: c.initials,
-        color: c.color,
-        avatarUrl: c.avatarUrl,
-        text: c.text,
-        at: new Date(c.createdAt).toLocaleString(undefined, {
-          month: "short",
-          day: "numeric",
-          hour: "numeric",
-          minute: "2-digit",
-        }),
-      }))
       return {
         title: task.title,
         description: task.description,
@@ -257,7 +254,6 @@ function BoardTaskDialogBody({
         tags: task.tags,
         progress: task.progress,
         assigneeIds: task.assignees.map((a) => a.id),
-        comments: storedComments,
         checklist: task.checklist ?? [],
       }
     }
@@ -272,7 +268,6 @@ function BoardTaskDialogBody({
       tags: [] as string[],
       progress: base.progress,
       assigneeIds: [] as string[],
-      comments: [] as CommentEntry[],
       checklist: [] as TaskChecklistItem[],
     }
     // Intentionally compute once per mount; the dialog body remounts each time it opens.
@@ -292,11 +287,71 @@ function BoardTaskDialogBody({
   const [assigneeQuery, setAssigneeQuery] = useState("")
 
   const [commentDraft, setCommentDraft] = useState("")
-  const [comments, setComments] = useState<CommentEntry[]>(seed.comments)
+  const commentsListRef = useRef<HTMLUListElement>(null)
   const [checklist, setChecklist] = useState<TaskChecklistItem[]>(
     "checklist" in seed ? seed.checklist : []
   )
   const [checklistDraft, setChecklistDraft] = useState("")
+
+  const commentsEnabled = mode === "edit" && Boolean(task?.id)
+  const {
+    data: taskComments = [],
+    isPending: commentsLoading,
+    isFetching: commentsFetching,
+  } = useTaskCommentsQuery(task?.id, { enabled: commentsEnabled })
+  useTaskCommentsRealtime(task?.id, commentsEnabled, user?.id ?? null)
+
+  const insertComment = useInsertTaskComment(
+    task && board && workspaceId && user?.id
+      ? {
+          boardId,
+          board,
+          task,
+          workspaceId,
+          workspaceName: workspace?.name,
+          workspaceSlug: workspace?.slug,
+          assigneeIds,
+          workspaceMembers,
+          userId: user.id,
+          userEmail: user.email,
+        }
+      : {
+          boardId,
+          board: board ?? { id: boardId, workspaceId: workspaceId ?? "", name: "" },
+          task: {
+            id: "",
+            title: "",
+            description: "",
+            columnId: "todo",
+            tags: [],
+            priority: "Medium",
+            due: "",
+            overdue: false,
+            comments: 0,
+            attachments: 0,
+            assignees: [],
+            progress: 0,
+          },
+          workspaceId: workspaceId ?? "",
+          assigneeIds: [],
+          workspaceMembers: [],
+          userId: user?.id ?? "",
+        }
+  )
+
+  const commentEntries: CommentEntry[] = useMemo(
+    () =>
+      taskComments.map((c) => ({
+        id: c.id,
+        author: c.authorName,
+        initials: c.initials,
+        color: c.color,
+        avatarUrl: c.avatarUrl,
+        text: c.text,
+        at: formatRelativeTime(new Date(c.createdAt).toISOString()),
+      })),
+    [taskComments]
+  )
 
   // Inherited from board settings, locally editable for this task only
   const [notifyAssignees, setNotifyAssignees] = useState(
@@ -372,28 +427,20 @@ function BoardTaskDialogBody({
 
   const removeTag = (t: string) => setTags((prev) => prev.filter((x) => x !== t))
 
-  const postComment = () => {
+  const postComment = useCallback(() => {
     const text = commentDraft.trim()
-    if (!text) return
-    const me =
-      workspaceMembers.find((m) => m.id === user?.id) ??
-      teamMembers.find((m) => m.id === user?.id)
-    const entry: CommentEntry = {
-      id: makeId("c"),
-      author:
-        me?.name ??
-        getFullNameFromMetadata(user?.user_metadata) ??
-        user?.email?.split("@")[0] ??
-        "You",
-      initials: me?.initials ?? "YO",
-      color: me?.color ?? "bg-primary/15 text-primary",
-      avatarUrl: me?.avatarUrl,
-      text,
-      at: "just now",
-    }
-    setComments((prev) => [entry, ...prev])
-    setCommentDraft("")
-  }
+    if (!text || !task || !user?.id || !board) return
+    const listEl = commentsListRef.current
+    const scrollTop = listEl?.scrollTop ?? 0
+    insertComment.mutate(text, {
+      onSuccess: () => {
+        setCommentDraft("")
+        requestAnimationFrame(() => {
+          if (listEl) listEl.scrollTop = scrollTop
+        })
+      },
+    })
+  }, [commentDraft, task, user?.id, board, insertComment])
 
   const addChecklistItem = () => {
     const text = checklistDraft.trim()
@@ -420,16 +467,6 @@ function BoardTaskDialogBody({
     }
     const dueStored = formatDueForStorage(due)
     const overdueComputed = computeOverdue(dueStored)
-    const taskComments: TaskComment[] = comments.map((c) => ({
-      id: c.id,
-      authorId: user?.id ?? "local",
-      authorName: c.author,
-      initials: c.initials,
-      color: c.color,
-      avatarUrl: c.avatarUrl,
-      text: c.text,
-      createdAt: Date.now(),
-    }))
     const checklistDone = checklist.filter((c) => c.done).length
     const progressFromChecklist =
       checklist.length > 0 ? Math.round((checklistDone / checklist.length) * 100) : progress
@@ -442,12 +479,11 @@ function BoardTaskDialogBody({
       priority,
       due: dueStored,
       overdue: overdueComputed,
-      comments: taskComments.length,
+      comments: task?.comments ?? commentEntries.length,
       attachments: task?.attachments ?? 0,
       assignees: assigneesPayload,
       progress: Math.min(100, Math.max(0, progressFromChecklist)),
       checklist,
-      taskComments,
     }
     if (mode === "create") {
       addTask(boardId, payload)
@@ -482,15 +518,7 @@ function BoardTaskDialogBody({
         overdue: computeOverdue(formatDueForStorage(due)),
         assignees: assigneesPayload,
         checklist,
-        taskComments: comments.map((c) => ({
-          id: c.id,
-          authorId: user?.id ?? "local",
-          authorName: c.author,
-          initials: c.initials,
-          color: c.color,
-          text: c.text,
-          createdAt: Date.now(),
-        })),
+        taskComments,
       },
       teamById
     )
@@ -504,9 +532,8 @@ function BoardTaskDialogBody({
     due,
     assigneesPayload,
     checklist,
-    comments,
+    taskComments,
     teamById,
-    user?.id,
   ])
 
   return (
@@ -738,7 +765,7 @@ function BoardTaskDialogBody({
                 <div className="flex items-center justify-between gap-2">
                   <SectionLabel icon={MessageSquare}>Comments &amp; activity</SectionLabel>
                   <span className="text-[10px] tabular-nums text-muted-foreground">
-                    {comments.length} comment{comments.length === 1 ? "" : "s"}
+                    {commentEntries.length} comment{commentEntries.length === 1 ? "" : "s"}
                   </span>
                 </div>
                 <div className="flex items-start gap-2.5 rounded-xl border border-border/60 bg-background px-3 py-2.5">
@@ -774,19 +801,49 @@ function BoardTaskDialogBody({
                         type="button"
                         size="sm"
                         className="h-7 gap-1 rounded-full text-xs"
-                        disabled={!commentDraft.trim()}
+                        disabled={
+                          !commentDraft.trim() ||
+                          !commentsEnabled ||
+                          insertComment.isPending
+                        }
                         onClick={postComment}
                       >
                         <Send className="size-3" aria-hidden />
-                        Comment
+                        {insertComment.isPending ? "Posting…" : "Comment"}
                       </Button>
                     </div>
                   </div>
                 </div>
 
-                <ul className="space-y-2.5">
-                  {comments.map((c) => (
-                    <li key={c.id} className="flex items-start gap-2.5">
+                <ul ref={commentsListRef} className="space-y-2.5">
+                  {(commentsLoading || commentsFetching) && commentEntries.length === 0 ? (
+                    <>
+                      {[0, 1].map((i) => (
+                        <li
+                          key={i}
+                          className="flex animate-pulse items-start gap-2.5"
+                          aria-hidden
+                        >
+                          <motion.div className="size-8 shrink-0 rounded-full bg-muted" />
+                          <div className="min-w-0 flex-1 space-y-2 rounded-xl border border-border/60 bg-card px-3 py-2">
+                            <div className="h-3 w-24 rounded bg-muted" />
+                            <div className="h-3 w-full rounded bg-muted/80" />
+                          </div>
+                        </li>
+                      ))}
+                    </>
+                  ) : null}
+                  <AnimatePresence initial={false}>
+                  {commentEntries.map((c) => (
+                    <motion.li
+                      key={c.id}
+                      layout
+                      initial={{ opacity: 0, y: 6 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: -4 }}
+                      transition={{ duration: 0.15 }}
+                      className="flex items-start gap-2.5"
+                    >
                       <UserAvatar
                         name={c.author}
                         initials={c.initials}
@@ -807,9 +864,10 @@ function BoardTaskDialogBody({
                         </div>
                         <p className="mt-0.5 text-sm leading-relaxed text-foreground/90">{c.text}</p>
                       </div>
-                    </li>
+                    </motion.li>
                   ))}
-                  {comments.length === 0 ? (
+                  </AnimatePresence>
+                  {!commentsLoading && commentEntries.length === 0 ? (
                     <li className="rounded-xl border border-dashed border-border/60 bg-muted/15 px-3 py-4 text-center text-xs text-muted-foreground">
                       No comments yet. Drop the first note above.
                     </li>

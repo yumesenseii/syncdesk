@@ -30,6 +30,7 @@ import {
 } from "@/lib/boards/task-utils"
 import { UserAvatar } from "@/components/ui/user-avatar"
 import { cn } from "@/lib/utils"
+import { useBoardTasksRealtime } from "@/hooks/use-board-tasks-realtime"
 import { useBoardTasks, useBoardsStore } from "@/stores/boards-store"
 
 const PRIORITY_STYLES: Record<TaskPriority, string> = {
@@ -285,6 +286,7 @@ export function BoardKanban({
   boardTitle: string
 }) {
   const tasks = useBoardTasks(boardId)
+  useBoardTasksRealtime(boardId)
   const moveTask = useBoardsStore((s) => s.moveTask)
   const router = useRouter()
   const pathname = usePathname()

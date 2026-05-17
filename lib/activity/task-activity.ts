@@ -431,20 +431,6 @@ export function logTaskChanges(
     return
   }
 
-  const prevComments = prev.taskComments?.length ?? prev.comments ?? 0
-  const nextComments = next.taskComments?.length ?? next.comments ?? 0
-  if (nextComments > prevComments) {
-    const last = next.taskComments?.[next.taskComments.length - 1]
-    logCommentAdded(
-      workspaceId,
-      board,
-      next,
-      last?.text ?? "New comment",
-      workspace
-    )
-    return
-  }
-
   const changed: string[] = []
   if (prev.title !== next.title) changed.push("title")
   if (prev.description !== next.description) changed.push("description")

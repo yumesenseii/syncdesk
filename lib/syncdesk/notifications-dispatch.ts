@@ -79,41 +79,6 @@ export async function dispatchTaskChangeNotifications(options: {
     taskId: next.id,
   }
 
-  const prevComments = prev.taskComments?.length ?? prev.comments ?? 0
-  const nextComments = next.taskComments?.length ?? next.comments ?? 0
-  if (nextComments > prevComments) {
-    const last = next.taskComments?.[next.taskComments.length - 1]
-    const preview = last?.text ?? "New comment"
-    const recipients = new Set(assigneeUserIds(next))
-    for (const id of parseMentionedUserIds(preview, members)) {
-      recipients.add(id)
-    }
-    excludeActor(recipients, actorId)
-
-    for (const userId of recipients) {
-      pushRow(rows, {
-        ...base,
-        userId,
-        type: "task_comment",
-        title: "New comment",
-        message: `${actorName} commented on ${next.title}`,
-      })
-    }
-
-    const mentionOnly = new Set(parseMentionedUserIds(preview, members))
-    excludeActor(mentionOnly, actorId)
-    for (const userId of mentionOnly) {
-      if (recipients.has(userId)) continue
-      pushRow(rows, {
-        ...base,
-        userId,
-        type: "mention",
-        title: "You were mentioned",
-        message: `${actorName} mentioned you on ${next.title}`,
-      })
-    }
-  }
-
   const prevAssigneeIds = new Set(prev.assignees.map((a) => a.id))
   for (const a of next.assignees) {
     if (!prevAssigneeIds.has(a.id) && a.id !== actorId) {
@@ -208,6 +173,69 @@ export async function dispatchBoardCreatedNotifications(options: {
   }))
 
   await createNotifications(client, rows)
+}
+
+/** Notify assignees and @mentioned users when a comment is posted. */
+export async function dispatchTaskCommentNotifications(options: {
+  client: SupabaseClient
+  actorId: string
+  actorName: string
+  workspaceId: string
+  boardId: string
+  taskId: string
+  taskTitle: string
+  content: string
+  assignees: TeamMember[]
+  workspaceMembers: TeamMember[]
+}) {
+  const {
+    client,
+    actorId,
+    actorName,
+    workspaceId,
+    boardId,
+    taskId,
+    taskTitle,
+    content,
+    assignees,
+    workspaceMembers,
+  } = options
+
+  const rows: CreateNotificationInput[] = []
+  const base = { actorId, workspaceId, boardId, taskId }
+
+  const recipients = new Set(assignees.map((a) => a.id))
+  for (const id of parseMentionedUserIds(content, workspaceMembers)) {
+    recipients.add(id)
+  }
+  excludeActor(recipients, actorId)
+
+  for (const userId of recipients) {
+    pushRow(rows, {
+      ...base,
+      userId,
+      type: "task_comment",
+      title: "New comment",
+      message: `${actorName} commented on ${taskTitle}`,
+    })
+  }
+
+  const mentionOnly = new Set(parseMentionedUserIds(content, workspaceMembers))
+  excludeActor(mentionOnly, actorId)
+  for (const userId of mentionOnly) {
+    if (recipients.has(userId)) continue
+    pushRow(rows, {
+      ...base,
+      userId,
+      type: "mention",
+      title: "You were mentioned",
+      message: `${actorName} mentioned you on ${taskTitle}`,
+    })
+  }
+
+  if (rows.length > 0) {
+    await createNotifications(client, rows)
+  }
 }
 
 export async function dispatchDueReminderNotifications(options: {
