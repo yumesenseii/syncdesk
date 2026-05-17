@@ -74,11 +74,10 @@ import { Input } from "@/components/ui/input"
 
 import { useActiveDashboardWorkspace } from "@/hooks/use-active-dashboard-workspace"
 
-import { useMarkAllNotificationsRead, useMarkNotificationRead, useNotificationsQuery } from "@/hooks/use-notifications-query"
+import { NotificationBell } from "@/components/notifications/notification-bell"
 
 import type { BoardTask, TeamMember, WorkspaceEntity } from "@/lib/boards/types"
 
-import { getOptionalSupabaseClient } from "@/lib/supabase"
 
 import { getWorkspaceStats, useBoardsStore } from "@/stores/boards-store"
 
@@ -187,19 +186,6 @@ export function DashboardTopBar({
     return () => window.removeEventListener("keydown", onKey)
 
   }, [])
-
-
-
-  const { data: notifications = [] } = useNotificationsQuery(userId ?? undefined)
-
-  const markRead = useMarkNotificationRead(userId ?? undefined)
-
-  const markAllRead = useMarkAllNotificationsRead(userId ?? undefined)
-
-  const unread = notifications.filter((n) => !n.read_at).length
-
-
-
   const submitAskAi = () => {
 
     toast.message("AI assistant is coming soon", {
@@ -554,119 +540,7 @@ export function DashboardTopBar({
 
 
 
-          <DropdownMenu>
-
-            <DropdownMenuTrigger asChild>
-
-              <Button
-
-                type="button"
-
-                variant="ghost"
-
-                size="icon"
-
-                className="relative size-9 shrink-0 rounded-full text-muted-foreground transition-colors duration-200 ease-out hover:bg-muted/70 hover:text-foreground"
-
-                aria-label="Notifications"
-
-              >
-
-                <Bell className="size-4" aria-hidden />
-
-                {unread > 0 ? (
-
-                  <span
-
-                    className="absolute right-2 top-2 size-2 rounded-full bg-rose-500 ring-2 ring-background"
-
-                    aria-hidden
-
-                  />
-
-                ) : null}
-
-              </Button>
-
-            </DropdownMenuTrigger>
-
-            <DropdownMenuContent align="end" className="w-80">
-
-              <DropdownMenuLabel>Notifications</DropdownMenuLabel>
-
-              {notifications.length > 0 ? (
-
-                <DropdownMenuItem
-
-                  disabled={unread === 0 || markAllRead.isPending}
-
-                  onSelect={(e) => {
-
-                    e.preventDefault()
-
-                    markAllRead.mutate()
-
-                  }}
-
-                >
-
-                  Mark all read
-
-                </DropdownMenuItem>
-
-              ) : null}
-
-              <DropdownMenuSeparator />
-
-              {notifications.length === 0 ? (
-
-                <div className="px-3 py-6 text-center text-sm text-muted-foreground">
-
-                  {getOptionalSupabaseClient()
-
-                    ? "You’re all caught up."
-
-                    : "Enable Supabase to sync notifications from the cloud."}
-
-                </div>
-
-              ) : (
-
-                notifications.map((n) => (
-
-                  <DropdownMenuItem
-
-                    key={n.id}
-
-                    className={cn("flex cursor-pointer flex-col items-start gap-0.5 py-2", !n.read_at && "bg-primary/5")}
-
-                    onClick={() => {
-
-                      if (!n.read_at) markRead.mutate(n.id)
-
-                    }}
-
-                  >
-
-                    <span className="text-sm font-medium text-foreground">{n.title}</span>
-
-                    {n.body ? (
-
-                      <span className="line-clamp-2 text-xs text-muted-foreground">{n.body}</span>
-
-                    ) : null}
-
-                  </DropdownMenuItem>
-
-                ))
-
-              )}
-
-            </DropdownMenuContent>
-
-          </DropdownMenu>
-
-
+          <NotificationBell userId={userId} />
 
           <ProfileDropdown
 

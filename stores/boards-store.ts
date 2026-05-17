@@ -18,8 +18,13 @@ import { applyTaskMove } from "@/lib/boards/reorder-tasks"
 import { newTaskUuid, nextSortOrder } from "@/lib/boards/task-utils"
 import { ensureUniqueSlug } from "@/lib/boards/slug"
 import * as taskActivity from "@/lib/activity/task-activity"
+import { resolveActorSnapshot } from "@/lib/activity/resolve-actor"
 import { getBoardsRemoteContext } from "@/lib/syncdesk/boards-sync-context"
 import * as remoteSync from "@/lib/syncdesk/boards-remote-sync"
+import {
+  dispatchBoardCreatedNotifications,
+  dispatchTaskChangeNotifications,
+} from "@/lib/syncdesk/notifications-dispatch"
 
 /**
  * Stable empty array for Zustand selectors and lookups.
@@ -351,11 +356,18 @@ export const useBoardsStore = create<BoardsState>()(
               ),
             }
           })
-          taskActivity.logBoardCreated(
-            workspaceId,
-            board,
-            workspaceActivityCtx(get().workspaces, workspaceId)
-          )
+          const wsCtx = workspaceActivityCtx(get().workspaces, workspaceId)
+          taskActivity.logBoardCreated(workspaceId, board, wsCtx)
+          void resolveActorSnapshot(client, userId).then((actor) => {
+            void dispatchBoardCreatedNotifications({
+              client,
+              actorId: userId,
+              actorName: actor.name,
+              workspaceId,
+              workspaceName: wsCtx?.name,
+              board,
+            })
+          })
           return board.id
         })()
       },
@@ -626,6 +638,24 @@ export const useBoardsStore = create<BoardsState>()(
               wsCtx
             )
           }
+          const { userId } = getBoardsRemoteContext()
+          if (userId) {
+            void resolveActorSnapshot(client, userId, getBoardsRemoteContext().userEmail).then(
+              (actor) => {
+                void dispatchTaskChangeNotifications({
+                  client,
+                  actorId: userId,
+                  actorName: actor.name,
+                  workspaceId: board.workspaceId,
+                  workspaceName: wsCtx?.name,
+                  board,
+                  prev: prevTask,
+                  next: moved,
+                  teamById: teamByIdMap(get().teamMembers),
+                })
+              }
+            )
+          }
         })
       },
 
@@ -673,13 +703,29 @@ export const useBoardsStore = create<BoardsState>()(
           }
           const board = get().boardsById[boardId]
           if (!board || !prevTask) return
+          const wsCtx = workspaceActivityCtx(get().workspaces, board.workspaceId)
           taskActivity.logTaskChanges(
             board.workspaceId,
             board,
             prevTask,
             task,
             teamByIdMap(get().teamMembers),
-            workspaceActivityCtx(get().workspaces, board.workspaceId)
+            wsCtx
+          )
+          void resolveActorSnapshot(client, userId, getBoardsRemoteContext().userEmail).then(
+            (actor) => {
+              void dispatchTaskChangeNotifications({
+                client,
+                actorId: userId,
+                actorName: actor.name,
+                workspaceId: board.workspaceId,
+                workspaceName: wsCtx?.name,
+                board,
+                prev: prevTask,
+                next: task,
+                teamById: teamByIdMap(get().teamMembers),
+              })
+            }
           )
         })
       },

@@ -1,6 +1,7 @@
 "use client"
 
-import { useCallback, useMemo, useState, type DragEvent } from "react"
+import { useCallback, useEffect, useMemo, useState, type DragEvent } from "react"
+import { usePathname, useRouter, useSearchParams } from "next/navigation"
 import { AnimatePresence, motion } from "framer-motion"
 import {
   Calendar,
@@ -285,6 +286,11 @@ export function BoardKanban({
 }) {
   const tasks = useBoardTasks(boardId)
   const moveTask = useBoardsStore((s) => s.moveTask)
+  const router = useRouter()
+  const pathname = usePathname()
+  const searchParams = useSearchParams()
+  const deepTaskId = searchParams.get("task")
+  const [deepLinkTask, setDeepLinkTask] = useState<BoardTask | null>(null)
   const [draggingId, setDraggingId] = useState<string | null>(null)
   const [hoverColumn, setHoverColumn] = useState<KanbanColumnId | null>(null)
   const [dropBeforeId, setDropBeforeId] = useState<string | null>(null)
@@ -292,6 +298,24 @@ export function BoardKanban({
   const [createColumn, setCreateColumn] = useState<KanbanColumnId>("todo")
 
   const tasksByColumn = useMemo(() => groupTasksByColumn(tasks), [tasks])
+
+  useEffect(() => {
+    if (!deepTaskId) {
+      setDeepLinkTask(null)
+      return
+    }
+    const match = tasks.find((t) => t.id === deepTaskId)
+    if (match) setDeepLinkTask(match)
+  }, [deepTaskId, tasks])
+
+  const clearDeepLink = useCallback(() => {
+    setDeepLinkTask(null)
+    if (!deepTaskId) return
+    const params = new URLSearchParams(searchParams.toString())
+    params.delete("task")
+    const qs = params.toString()
+    router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false })
+  }, [deepTaskId, pathname, router, searchParams])
 
   const openCreate = (col: KanbanColumnId) => {
     setCreateColumn(col)
@@ -434,6 +458,19 @@ export function BoardKanban({
         open={createOpen}
         onOpenChange={setCreateOpen}
       />
+
+      {deepLinkTask ? (
+        <BoardTaskDialog
+          boardId={boardId}
+          task={deepLinkTask}
+          mode="edit"
+          defaultColumn={deepLinkTask.columnId}
+          open
+          onOpenChange={(open) => {
+            if (!open) clearDeepLink()
+          }}
+        />
+      ) : null}
     </section>
   )
 }
