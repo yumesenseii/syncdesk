@@ -39,6 +39,11 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { useAuth } from "@/hooks/use-auth"
 import {
+  isRecentlyJoined,
+  useWorkspaceMembersQuery,
+  useWorkspaceMembersRealtime,
+} from "@/hooks/use-workspace-members"
+import {
   useResendWorkspaceInviteMutation,
   useRevokeWorkspaceInviteMutation,
   useSendWorkspaceInvitesMutation,
@@ -56,7 +61,7 @@ import {
 } from "@/lib/syncdesk/workspace-invites-remote"
 import { getFullNameFromMetadata } from "@/lib/user-profile"
 import { cn } from "@/lib/utils"
-import { getWorkspaceMembers, useBoardsStore } from "@/stores/boards-store"
+import { UserAvatar } from "@/components/ui/user-avatar"
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
@@ -115,6 +120,20 @@ function chipToneClass(chip: InviteChip): string {
   }
 }
 
+function formatJoinedAt(joinedAt: string | undefined): string {
+  if (!joinedAt) return "Joined recently"
+  const ms = Date.now() - Date.parse(joinedAt)
+  if (!Number.isFinite(ms)) return "Joined recently"
+  const minutes = Math.floor(ms / (60 * 1000))
+  if (minutes < 1) return "Joined just now"
+  if (minutes < 60) return `Joined ${minutes}m ago`
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return `Joined ${hours}h ago`
+  const days = Math.floor(hours / 24)
+  if (days === 1) return "Joined yesterday"
+  return `Joined ${days}d ago`
+}
+
 function formatExpiry(expiresAt: string): string {
   const ms = new Date(expiresAt).getTime() - Date.now()
   if (Number.isNaN(ms)) return "expires soon"
@@ -126,7 +145,7 @@ function formatExpiry(expiresAt: string): string {
 
 export function WorkspaceInviteDialog({
   workspace,
-  teamMembers,
+  teamMembers: _teamMembers,
   open,
   onOpenChange,
 }: {
@@ -138,13 +157,14 @@ export function WorkspaceInviteDialog({
   const { user } = useAuth()
   const supabaseConfigured = Boolean(getOptionalSupabaseClient())
   const emailConfigured = isEmailJsConfigured()
-  const teamMembersFromStore = useBoardsStore((s) => s.teamMembers)
   const invitesQuery = useWorkspaceInvitesQuery(open ? workspace.id : undefined)
+  const membersQuery = useWorkspaceMembersQuery(open ? workspace.id : undefined)
   const sendMutation = useSendWorkspaceInvitesMutation(workspace.id)
   const revokeMutation = useRevokeWorkspaceInviteMutation(workspace.id)
   const resendMutation = useResendWorkspaceInviteMutation(workspace.id)
 
   useWorkspaceInvitesRealtime(open ? workspace.id : undefined)
+  useWorkspaceMembersRealtime(open ? workspace.id : undefined)
 
   const [chips, setChips] = useState<InviteChip[]>([])
   const [draft, setDraft] = useState("")
@@ -152,17 +172,21 @@ export function WorkspaceInviteDialog({
   const [message, setMessage] = useState("")
   const inputRef = useRef<HTMLInputElement | null>(null)
 
-  const memberSet = useMemo(() => new Set(workspace.memberIds), [workspace.memberIds])
+  const workspaceMembers = membersQuery.data ?? []
+
+  const memberSet = useMemo(
+    () => new Set(workspaceMembers.map((m) => m.id)),
+    [workspaceMembers]
+  )
   const memberByEmail = useMemo(() => {
     const map = new Map<string, TeamMember>()
-    for (const m of teamMembers) {
-      const email = (m as TeamMember & { email?: string | null }).email
-      if (typeof email === "string" && email.trim()) {
-        map.set(email.trim().toLowerCase(), m)
+    for (const m of workspaceMembers) {
+      if (m.email?.trim()) {
+        map.set(m.email.trim().toLowerCase(), m)
       }
     }
     return map
-  }, [teamMembers])
+  }, [workspaceMembers])
 
   const pendingInviteEmails = useMemo(() => {
     const set = new Set<string>()
@@ -176,14 +200,9 @@ export function WorkspaceInviteDialog({
     () => (invitesQuery.data ?? []).filter((i) => i.status === "pending"),
     [invitesQuery.data]
   )
-  const recentlyAccepted = useMemo(
-    () => (invitesQuery.data ?? []).filter((i) => i.status === "accepted").slice(0, 6),
-    [invitesQuery.data]
-  )
-
-  const workspaceMembers = useMemo(
-    () => getWorkspaceMembers(workspace, teamMembersFromStore),
-    [workspace, teamMembersFromStore]
+  const recentlyJoined = useMemo(
+    () => workspaceMembers.filter((m) => isRecentlyJoined(m)),
+    [workspaceMembers]
   )
 
   function classifyEmail(value: string, current: InviteChip[]): InviteChip {
@@ -577,7 +596,12 @@ export function WorkspaceInviteDialog({
               }
             />
 
-            <MembersSection members={workspaceMembers} recentlyAccepted={recentlyAccepted} />
+            <MembersSection
+              members={workspaceMembers}
+              recentlyJoined={recentlyJoined}
+              isLoading={membersQuery.isPending}
+              supabaseConfigured={supabaseConfigured}
+            />
           </aside>
         </div>
 
@@ -838,10 +862,14 @@ function PendingInvitesSection({
 
 function MembersSection({
   members,
-  recentlyAccepted,
+  recentlyJoined,
+  isLoading,
+  supabaseConfigured,
 }: {
   members: TeamMember[]
-  recentlyAccepted: WorkspaceInviteRow[]
+  recentlyJoined: TeamMember[]
+  isLoading: boolean
+  supabaseConfigured: boolean
 }) {
   return (
     <section className="space-y-2">
@@ -854,45 +882,62 @@ function MembersSection({
           {members.length}
         </span>
       </div>
-      {members.length === 0 ? (
+      {!supabaseConfigured ? (
         <EmptyHint
           icon={<Users className="size-3.5 text-muted-foreground" aria-hidden />}
-          body="You’re the only one here — invite teammates to start collaborating."
+          body="Connect Supabase to load workspace members."
+        />
+      ) : isLoading ? (
+        <div className="flex items-center justify-center rounded-lg border border-dashed border-border/60 bg-background/60 px-2 py-3 text-[11px] text-muted-foreground">
+          <Loader2 className="mr-1.5 size-3.5 animate-spin" aria-hidden /> Loading members…
+        </div>
+      ) : members.length === 0 ? (
+        <EmptyHint
+          icon={<Users className="size-3.5 text-muted-foreground" aria-hidden />}
+          body="No members yet — send an invitation to add teammates."
         />
       ) : (
-        <ul className="flex flex-wrap gap-1">
-          {members.slice(0, 18).map((m) => (
-            <li
-              key={m.id}
-              className="inline-flex items-center gap-1.5 rounded-full border border-border/60 bg-background/80 px-1.5 py-0.5 text-[11px]"
-              title={m.name}
-            >
-              <span
-                className={cn(
-                  "flex size-5 items-center justify-center rounded-full text-[9px] font-semibold ring-2 ring-card",
-                  m.color
-                )}
-              >
-                {m.initials}
-              </span>
-              <span className="max-w-[10ch] truncate text-foreground">{m.name}</span>
+        <ul className="divide-y divide-border/50 overflow-hidden rounded-xl border border-border/60 bg-background/70">
+          {members.map((m) => (
+            <li key={m.id} className="flex items-center gap-2.5 px-2.5 py-2">
+              <UserAvatar
+                name={m.name}
+                initials={m.initials}
+                avatarUrl={m.avatarUrl}
+                color={m.color}
+                size="sm"
+              />
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <span className="truncate text-xs font-medium text-foreground">{m.name}</span>
+                  <span className="rounded-full border border-border/60 px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wide text-muted-foreground">
+                    {m.role ?? "member"}
+                  </span>
+                </div>
+                <p className="truncate text-[10px] text-muted-foreground">
+                  {m.email ?? "No email on file"}
+                </p>
+                <p className="mt-0.5 text-[10px] text-muted-foreground/80">
+                  {formatJoinedAt(m.joinedAt)}
+                </p>
+              </div>
             </li>
           ))}
-          {members.length > 18 ? (
-            <li className="inline-flex items-center rounded-full bg-muted px-2 py-0.5 text-[10px] font-semibold text-muted-foreground">
-              +{members.length - 18}
-            </li>
-          ) : null}
         </ul>
       )}
-      {recentlyAccepted.length > 0 ? (
-        <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/[0.04] px-2 py-1.5">
-          <p className="text-[10px] font-semibold uppercase tracking-wide text-emerald-700">
+      {recentlyJoined.length > 0 ? (
+        <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/[0.04] px-2.5 py-2">
+          <p className="text-[10px] font-semibold uppercase tracking-wide text-emerald-700 dark:text-emerald-400">
             Recently joined
           </p>
-          <p className="mt-0.5 line-clamp-2 text-[11px] text-muted-foreground">
-            {recentlyAccepted.map((r) => r.invited_email).join(", ")}
-          </p>
+          <ul className="mt-1.5 space-y-1">
+            {recentlyJoined.map((m) => (
+              <li key={`recent-${m.id}`} className="truncate text-[11px] text-muted-foreground">
+                {m.email ?? m.name}
+                <span className="text-muted-foreground/70"> · {formatJoinedAt(m.joinedAt)}</span>
+              </li>
+            ))}
+          </ul>
         </div>
       ) : null}
     </section>

@@ -20,6 +20,7 @@ import {
   type WorkspaceInviteRole,
   type WorkspaceInviteRow,
 } from "@/lib/syncdesk/workspace-invites-remote"
+import { workspaceMembersKey } from "@/hooks/use-workspace-members"
 import { pullRemoteBoardsState } from "@/lib/syncdesk/boards-remote-sync"
 import { getOptionalSupabaseClient } from "@/lib/supabase"
 import { useBoardsStore } from "@/stores/boards-store"
@@ -75,6 +76,7 @@ export function useWorkspaceInvitesRealtime(workspaceId: string | null | undefin
       ],
       onChange: () => {
         void qc.invalidateQueries({ queryKey: invitesKey(workspaceId) })
+        void qc.invalidateQueries({ queryKey: workspaceMembersKey(workspaceId) })
       },
     })
   }, [qc, workspaceId])
@@ -201,6 +203,7 @@ export function useSendWorkspaceInvitesMutation(workspaceId: string) {
     },
     onSettled: () => {
       void qc.invalidateQueries({ queryKey: invitesKey(workspaceId) })
+      void qc.invalidateQueries({ queryKey: workspaceMembersKey(workspaceId) })
     },
     onSuccess: () => {
       invalidateActivityFeed()
@@ -223,6 +226,7 @@ export function useRevokeWorkspaceInviteMutation(workspaceId: string) {
     },
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: invitesKey(workspaceId) })
+      void qc.invalidateQueries({ queryKey: workspaceMembersKey(workspaceId) })
     },
     onError: (err) => toast.error(err.message),
   })
@@ -252,6 +256,7 @@ export function useResendWorkspaceInviteMutation(workspaceId: string) {
     },
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: invitesKey(workspaceId) })
+      void qc.invalidateQueries({ queryKey: workspaceMembersKey(workspaceId) })
       toast.success("Invitation email sent.")
     },
     onError: (err) => toast.error(err.message),

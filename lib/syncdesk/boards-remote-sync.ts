@@ -367,7 +367,8 @@ export function subscribeBoardsRealtime(
     topic: `syncdesk-boards-${userId}`,
     bindings: [
       { event: "*", schema: "public", table: "workspaces", filter: `owner_id=eq.${userId}` },
-      { event: "*", schema: "public", table: "workspace_members", filter: `user_id=eq.${userId}` },
+      // No user_id filter: RLS limits events to rows in workspaces the user can see.
+      { event: "*", schema: "public", table: "workspace_members" },
       { event: "*", schema: "public", table: "boards" },
       { event: "*", schema: "public", table: "board_tasks" },
     ],

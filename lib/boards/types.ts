@@ -16,6 +16,8 @@ export interface TeamMember {
   email?: string
   role?: WorkspaceMemberRole
   avatarUrl?: string
+  /** ISO timestamp from `workspace_members.joined_at` when loaded from Supabase. */
+  joinedAt?: string
 }
 
 export interface BoardLabel {

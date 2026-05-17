@@ -60,7 +60,84 @@ export function workspaceMemberToTeamMember(
     email: email ?? undefined,
     role: row.role,
     avatarUrl: profile?.avatar_url ?? undefined,
+    joinedAt: row.joined_at,
   }
+}
+
+type AcceptedInviteEmail = {
+  invited_email: string
+  accepted_by: string | null
+  accepted_at: string | null
+}
+
+/**
+ * Loads all workspace members from `workspace_members` (source of truth).
+ * Enriches email from accepted invites when profile email is unavailable.
+ */
+export async function fetchWorkspaceMembersDetail(
+  client: SupabaseClient,
+  workspaceId: string
+): Promise<TeamMember[]> {
+  const [membersRes, invitesRes, wsRes] = await Promise.all([
+    client
+      .from("workspace_members")
+      .select("id, workspace_id, user_id, role, joined_at, profiles(display_name, avatar_url)")
+      .eq("workspace_id", workspaceId)
+      .order("joined_at", { ascending: true }),
+    client
+      .from("workspace_invites")
+      .select("invited_email, accepted_by, accepted_at")
+      .eq("workspace_id", workspaceId)
+      .eq("status", "accepted"),
+    client.from("workspaces").select("owner_id").eq("id", workspaceId).maybeSingle(),
+  ])
+
+  if (membersRes.error) {
+    console.warn("[syncdesk] fetch workspace members:", membersRes.error.message)
+    return []
+  }
+
+  const emailByUserId = new Map<string, string>()
+  for (const inv of (invitesRes.data ?? []) as AcceptedInviteEmail[]) {
+    if (inv.accepted_by && inv.invited_email) {
+      emailByUserId.set(inv.accepted_by, inv.invited_email.trim().toLowerCase())
+    }
+  }
+
+  const members: TeamMember[] = []
+  const seen = new Set<string>()
+
+  for (const raw of (membersRes.data ?? []) as Array<
+    WorkspaceMemberRow & { profiles: DbProfile | DbProfile[] | null }
+  >) {
+    const profile = Array.isArray(raw.profiles) ? raw.profiles[0] : raw.profiles
+    const email = emailByUserId.get(raw.user_id)
+    members.push(workspaceMemberToTeamMember(raw, profile ?? null, email))
+    seen.add(raw.user_id)
+  }
+
+  const ownerId = (wsRes.data as { owner_id?: string } | null)?.owner_id
+  if (ownerId && !seen.has(ownerId)) {
+    const { data: ownerProfile } = await client
+      .from("profiles")
+      .select("display_name, avatar_url")
+      .eq("id", ownerId)
+      .maybeSingle()
+    const profile = ownerProfile as DbProfile | null
+    const name = profile?.display_name?.trim() || "Owner"
+    members.unshift({
+      id: ownerId,
+      userId: ownerId,
+      name,
+      initials: initialsFromName(name),
+      color: colorForUserId(ownerId),
+      role: "owner",
+      avatarUrl: profile?.avatar_url ?? undefined,
+      joinedAt: new Date(0).toISOString(),
+    })
+  }
+
+  return members
 }
 
 export async function fetchWorkspaceMembersForWorkspaces(
@@ -85,7 +162,7 @@ export async function fetchWorkspaceMembersForWorkspaces(
     WorkspaceMemberRow & { profiles: DbProfile | DbProfile[] | null }
   >) {
     const profile = Array.isArray(raw.profiles) ? raw.profiles[0] : raw.profiles
-    const member = workspaceMemberToTeamMember(raw, profile ?? null)
+    const member = workspaceMemberToTeamMember(raw, profile ?? null, undefined)
     const list = byWorkspace[raw.workspace_id] ?? []
     list.push(member)
     byWorkspace[raw.workspace_id] = list
