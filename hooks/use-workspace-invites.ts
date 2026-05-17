@@ -5,11 +5,11 @@ import { useEffect } from "react"
 import { toast } from "sonner"
 
 import { invalidateActivityFeed } from "@/lib/activity/activity-invalidation"
+import { isEmailJsConfigured, sendWorkspaceInviteEmail } from "@/lib/email"
 import {
   buildInviteAcceptUrl,
   callAcceptInvite,
   type AcceptInviteResult,
-  dispatchInviteEmail,
   fetchWorkspaceInvites,
   generateInviteToken,
   insertWorkspaceInvite,
@@ -96,8 +96,22 @@ export interface SendInvitesResult {
   created: WorkspaceInviteRow[]
   failed: { email: string; reason: string }[]
   emailDelivered: number
-  /** Invites saved in DB but Resend / Edge Function could not send email */
+  /** Invites saved in DB but EmailJS could not send email */
   emailFailures: { email: string; reason: string }[]
+}
+
+async function deliverInviteEmail(
+  workspaceName: string,
+  row: WorkspaceInviteRow
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  const inviteLink = buildInviteAcceptUrl(row.token)
+  const result = await sendWorkspaceInviteEmail({
+    recipientEmail: row.invited_email,
+    workspaceName,
+    inviteLink,
+  })
+  if (result.ok) return { ok: true }
+  return { ok: false, message: result.message }
 }
 
 export function useSendWorkspaceInvitesMutation(workspaceId: string) {
@@ -110,6 +124,12 @@ export function useSendWorkspaceInvitesMutation(workspaceId: string) {
           "Connect Supabase in .env.local to send invitations — local-only mode can’t deliver email."
         )
       }
+      if (!isEmailJsConfigured()) {
+        throw new Error(
+          "EmailJS is not configured. Add NEXT_PUBLIC_EMAILJS_SERVICE_ID, NEXT_PUBLIC_EMAILJS_TEMPLATE_ID, and NEXT_PUBLIC_EMAILJS_PUBLIC_KEY."
+        )
+      }
+
       const { ensureWorkspaceOwnerMember } = await import(
         "@/lib/syncdesk/workspace-members-remote"
       )
@@ -152,19 +172,7 @@ export function useSendWorkspaceInvitesMutation(workspaceId: string) {
             if (!retry.error && retry.data) {
               const row = retry.data as WorkspaceInviteRow
               created.push(row)
-              const acceptUrl = buildInviteAcceptUrl(row.token)
-              const result = await dispatchInviteEmail(client, {
-                inviteId: row.id,
-                workspaceId: row.workspace_id,
-                workspaceName: input.workspaceName,
-                inviterName: input.inviterName,
-                inviterEmail: input.inviterEmail,
-                recipientEmail: row.invited_email,
-                role: row.role,
-                acceptUrl,
-                message: row.message,
-                expiresAt: row.expires_at,
-              })
+              const result = await deliverInviteEmail(input.workspaceName, row)
               if (result.ok) emailDelivered += 1
               else emailFailures.push({ email: row.invited_email, reason: result.message })
               continue
@@ -181,19 +189,7 @@ export function useSendWorkspaceInvitesMutation(workspaceId: string) {
         }
         const row = data as WorkspaceInviteRow
         created.push(row)
-        const acceptUrl = buildInviteAcceptUrl(row.token)
-        const result = await dispatchInviteEmail(client, {
-          inviteId: row.id,
-          workspaceId: row.workspace_id,
-          workspaceName: input.workspaceName,
-          inviterName: input.inviterName,
-          inviterEmail: input.inviterEmail,
-          recipientEmail: row.invited_email,
-          role: row.role,
-          acceptUrl,
-          message: row.message,
-          expiresAt: row.expires_at,
-        })
+        const result = await deliverInviteEmail(input.workspaceName, row)
         if (result.ok) {
           emailDelivered += 1
         } else {
@@ -248,19 +244,7 @@ export function useResendWorkspaceInviteMutation(workspaceId: string) {
       const { data, error } = await resendWorkspaceInvite(client, input.inviteId)
       if (error || !data) throw new Error(error?.message ?? "Failed to resend invitation.")
       const row = data as WorkspaceInviteRow
-      const acceptUrl = buildInviteAcceptUrl(row.token)
-      const send = await dispatchInviteEmail(client, {
-        inviteId: row.id,
-        workspaceId: row.workspace_id,
-        workspaceName: input.workspaceName,
-        inviterName: input.inviterName,
-        inviterEmail: input.inviterEmail,
-        recipientEmail: row.invited_email,
-        role: row.role,
-        acceptUrl,
-        message: row.message,
-        expiresAt: row.expires_at,
-      })
+      const send = await deliverInviteEmail(input.workspaceName, row)
       if (!send.ok) {
         throw new Error(send.message)
       }

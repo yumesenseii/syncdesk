@@ -46,6 +46,7 @@ import {
   useWorkspaceInvitesRealtime,
 } from "@/hooks/use-workspace-invites"
 import type { TeamMember, WorkspaceEntity } from "@/lib/boards/types"
+import { isEmailJsConfigured } from "@/lib/email"
 import { getOptionalSupabaseClient } from "@/lib/supabase"
 import {
   buildInviteAcceptUrl,
@@ -136,6 +137,7 @@ export function WorkspaceInviteDialog({
 }) {
   const { user } = useAuth()
   const supabaseConfigured = Boolean(getOptionalSupabaseClient())
+  const emailConfigured = isEmailJsConfigured()
   const teamMembersFromStore = useBoardsStore((s) => s.teamMembers)
   const invitesQuery = useWorkspaceInvitesQuery(open ? workspace.id : undefined)
   const sendMutation = useSendWorkspaceInvitesMutation(workspace.id)
@@ -282,7 +284,14 @@ export function WorkspaceInviteDialog({
     }
 
     if (!supabaseConfigured || !user) {
-      toast.error("Connect Supabase to send real email invitations.")
+      toast.error("Connect Supabase to send invitations.")
+      return
+    }
+
+    if (!emailConfigured) {
+      toast.error(
+        "EmailJS is not configured. Add NEXT_PUBLIC_EMAILJS_SERVICE_ID, NEXT_PUBLIC_EMAILJS_TEMPLATE_ID, and NEXT_PUBLIC_EMAILJS_PUBLIC_KEY."
+      )
       return
     }
 
@@ -725,7 +734,7 @@ function PendingInvitesSection({
       {!supabaseConfigured ? (
         <EmptyHint
           icon={<Mail className="size-3.5 text-muted-foreground" aria-hidden />}
-          body="Configure Supabase + apply the 0002_workspace_invites migration to enable email invites."
+          body="Configure Supabase and EmailJS env vars to send workspace invitations."
         />
       ) : loadError ? (
         <EmptyHint
