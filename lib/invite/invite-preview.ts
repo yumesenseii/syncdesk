@@ -78,6 +78,9 @@ export type ParsedAcceptInviteError =
 
 export function parseAcceptInviteError(message: string): ParsedAcceptInviteError {
   const lower = message.toLowerCase()
+  if (lower.includes("must be signed in")) {
+    return { kind: "generic", message }
+  }
   const signInMatch = message.match(/sign in with\s+(.+?)\s+to accept/i)
   if (signInMatch?.[1]) {
     return { kind: "wrong_email", invitedEmail: signInMatch[1].trim() }

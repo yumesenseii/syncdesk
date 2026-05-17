@@ -6,7 +6,6 @@ import { useCallback, useEffect, useRef, type ReactNode } from "react"
 import {
   AlertCircle,
   ArrowLeft,
-  Clock,
   Loader2,
   LogIn,
   LogOut,
@@ -23,7 +22,6 @@ import { useAcceptInviteMutation } from "@/hooks/use-workspace-invites"
 import {
   buildInvitePath,
   clearPersistedInviteToken,
-  formatInviteExpiry,
   getInviteTerminalState,
   parseAcceptInviteError,
   persistInviteToken,
@@ -31,7 +29,7 @@ import {
   type InvitePreview,
   type InviteTerminalState,
 } from "@/lib/invite"
-import { emailsMatch, formatInviteRole } from "@/lib/invite/invite-email"
+import { emailsMatch } from "@/lib/invite/invite-email"
 import { getOptionalSupabaseClient } from "@/lib/supabase"
 import { useBoardsStore } from "@/stores/boards-store"
 
@@ -51,6 +49,14 @@ export function InviteOnboardingFlow({ token }: InviteOnboardingFlowProps) {
   useEffect(() => {
     if (token) persistInviteToken(token)
   }, [token])
+
+  useEffect(() => {
+    if (authLoading) return
+    if (!user) {
+      acceptTriggeredRef.current = false
+      acceptMutation.reset()
+    }
+  }, [authLoading, user, acceptMutation])
 
   const preview = previewQuery.data ?? null
   const terminal = getInviteTerminalState(preview)
@@ -75,7 +81,7 @@ export function InviteOnboardingFlow({ token }: InviteOnboardingFlowProps) {
   )
 
   const tryAccept = useCallback(() => {
-    if (!token || acceptTriggeredRef.current) return
+    if (!token || !user || acceptTriggeredRef.current) return
     acceptTriggeredRef.current = true
     acceptMutation.mutate(token, {
       onSuccess: (data) => finishJoin(data),
@@ -83,7 +89,7 @@ export function InviteOnboardingFlow({ token }: InviteOnboardingFlowProps) {
         acceptTriggeredRef.current = false
       },
     })
-  }, [acceptMutation, finishJoin, token])
+  }, [acceptMutation, finishJoin, token, user])
 
   useEffect(() => {
     if (authLoading || previewQuery.isLoading) return
@@ -115,17 +121,18 @@ export function InviteOnboardingFlow({ token }: InviteOnboardingFlowProps) {
   const switchAccount = useCallback(async () => {
     const client = getOptionalSupabaseClient()
     if (client) await client.auth.signOut()
+    acceptMutation.reset()
+    acceptTriggeredRef.current = false
     router.push(loginHref)
-  }, [loginHref, router])
+  }, [acceptMutation, loginHref, router])
 
   if (!supabaseConfigured) {
     return (
       <InviteShell>
         <InviteCard>
-          <InviteBrandHeader />
-          <InviteErrorCard
-            title="Supabase isn’t configured"
-            body="Add NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY to accept invitations."
+          <InviteNeutralNotice
+            title="Setup required"
+            body="Add Supabase environment variables to accept workspace invitations."
           />
         </InviteCard>
       </InviteShell>
@@ -136,14 +143,15 @@ export function InviteOnboardingFlow({ token }: InviteOnboardingFlowProps) {
     return (
       <InviteShell>
         <InviteCard>
-          <InviteBrandHeader />
           <InviteErrorCard title="Invalid link" body="This invitation link is missing a token." />
         </InviteCard>
       </InviteShell>
     )
   }
 
-  if (previewQuery.isLoading || authLoading) {
+  const isBootstrapping = previewQuery.isLoading || authLoading
+
+  if (isBootstrapping) {
     return (
       <InviteShell>
         <InviteLoading label="Loading invitation…" />
@@ -151,6 +159,45 @@ export function InviteOnboardingFlow({ token }: InviteOnboardingFlowProps) {
     )
   }
 
+  // Unauthenticated: never show accept failures or preview fetch errors as red errors.
+  if (!user) {
+    if (preview && terminal) {
+      return (
+        <InviteShell>
+          <InviteTerminalCard kind={terminal} preview={preview} loginHref={loginHref} />
+        </InviteShell>
+      )
+    }
+
+    if (preview && !terminal) {
+      return (
+        <InviteShell>
+          <InvitePreviewCard preview={preview} loginHref={loginHref} registerHref={registerHref} />
+        </InviteShell>
+      )
+    }
+
+    if (!previewQuery.isError && !preview) {
+      return (
+        <InviteShell>
+          <InviteTerminalCard kind="invalid" loginHref={loginHref} />
+        </InviteShell>
+      )
+    }
+
+    return (
+      <InviteShell>
+        <InvitePreviewFallbackCard
+          loginHref={loginHref}
+          registerHref={registerHref}
+          onRetry={() => previewQuery.refetch()}
+          isRetrying={previewQuery.isFetching}
+        />
+      </InviteShell>
+    )
+  }
+
+  // Authenticated
   if (previewQuery.isError) {
     return (
       <InviteShell>
@@ -174,7 +221,7 @@ export function InviteOnboardingFlow({ token }: InviteOnboardingFlowProps) {
   if (!preview) {
     return (
       <InviteShell>
-        <InviteTerminalCard kind="invalid" />
+        <InviteTerminalCard kind="invalid" loginHref={loginHref} />
       </InviteShell>
     )
   }
@@ -182,15 +229,7 @@ export function InviteOnboardingFlow({ token }: InviteOnboardingFlowProps) {
   if (terminal) {
     return (
       <InviteShell>
-        <InviteTerminalCard kind={terminal} preview={preview} />
-      </InviteShell>
-    )
-  }
-
-  if (!user) {
-    return (
-      <InviteShell>
-        <InvitePreviewCard preview={preview} loginHref={loginHref} registerHref={registerHref} />
+        <InviteTerminalCard kind={terminal} preview={preview} loginHref={loginHref} />
       </InviteShell>
     )
   }
@@ -230,7 +269,7 @@ export function InviteOnboardingFlow({ token }: InviteOnboardingFlowProps) {
     ) {
       return (
         <InviteShell>
-          <InviteTerminalCard kind={parsed.kind} preview={preview} />
+          <InviteTerminalCard kind={parsed.kind} preview={preview} loginHref={loginHref} />
         </InviteShell>
       )
     }
@@ -261,7 +300,7 @@ export function InviteOnboardingFlow({ token }: InviteOnboardingFlowProps) {
 
 function InviteShell({ children }: { children: ReactNode }) {
   return (
-    <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-primary/5 via-background to-card px-4 py-10">
+    <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-primary/[0.07] via-background to-primary/[0.03] px-4 py-10">
       <div className="w-full max-w-md">{children}</div>
     </div>
   )
@@ -269,22 +308,17 @@ function InviteShell({ children }: { children: ReactNode }) {
 
 function InviteCard({ children }: { children: ReactNode }) {
   return (
-    <div className="rounded-2xl border border-border/60 bg-card p-8 shadow-lg shadow-foreground/[0.04] transition-shadow duration-300">
+    <div className="rounded-2xl border border-border/50 bg-card/95 p-8 shadow-xl shadow-primary/[0.06] backdrop-blur-sm transition-shadow duration-300">
       {children}
     </div>
   )
 }
 
-function InviteBrandHeader() {
+function InviteBrandHeader({ title = "Workspace invitation" }: { title?: string }) {
   return (
-    <div className="mb-6 flex items-center gap-3">
-      <span className="flex size-11 items-center justify-center rounded-2xl bg-primary/10 text-primary ring-1 ring-primary/15">
-        <UserPlus className="size-5" aria-hidden />
-      </span>
-      <div>
-        <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">SyncDesk</p>
-        <h1 className="text-lg font-semibold tracking-tight text-foreground">Workspace invitation</h1>
-      </div>
+    <div className="mb-6 text-center sm:text-left">
+      <p className="text-xs font-semibold uppercase tracking-widest text-primary/80">SyncDesk</p>
+      <h1 className="mt-1 text-xl font-semibold tracking-tight text-foreground">{title}</h1>
     </div>
   )
 }
@@ -298,66 +332,107 @@ function InvitePreviewCard({
   loginHref: string
   registerHref: string
 }) {
+  const showInviter = preview.inviterName && preview.inviterName !== "A teammate"
+
   return (
     <InviteCard>
-      <InviteBrandHeader />
+      <InviteBrandHeader title="Workspace invitation" />
+
       <div className="space-y-6">
-        <div className="flex items-center gap-4">
+        <div className="flex flex-col items-center gap-4 text-center sm:flex-row sm:items-start sm:text-left">
           <span
-            className="flex size-14 shrink-0 items-center justify-center rounded-2xl bg-primary/10 text-2xl ring-1 ring-primary/15"
+            className="flex size-16 shrink-0 items-center justify-center rounded-2xl bg-primary/10 text-3xl ring-1 ring-primary/20 shadow-inner shadow-primary/5"
             aria-hidden
           >
             {preview.workspaceIcon}
           </span>
-          <div className="min-w-0 flex-1">
-            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-              You&apos;re invited to join
-            </p>
-            <h2 className="truncate text-xl font-semibold tracking-tight text-foreground">
-              {preview.workspaceName}
-            </h2>
-            <p className="mt-0.5 text-sm text-muted-foreground">
-              <span className="font-medium text-foreground">{preview.inviterName}</span> invited you as{" "}
-              <span className="font-medium text-primary">{formatInviteRole(preview.role)}</span>
-            </p>
+          <div className="min-w-0 space-y-1">
+            <p className="text-sm text-muted-foreground">You&apos;re invited to join</p>
+            <h2 className="text-2xl font-semibold tracking-tight text-foreground">{preview.workspaceName}</h2>
           </div>
         </div>
 
-        <div className="space-y-2 rounded-xl border border-border/60 bg-muted/20 p-4 text-sm">
-          <div className="flex items-center justify-between gap-3">
-            <span className="text-muted-foreground">Invited as</span>
-            <span className="truncate font-medium text-foreground">{preview.invitedEmail}</span>
+        <div className="space-y-3 rounded-xl border border-border/50 bg-muted/30 p-4 text-sm">
+          <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+            <span className="text-muted-foreground">Invited email</span>
+            <span className="font-medium text-foreground">{preview.invitedEmail}</span>
           </div>
-          <div className="flex items-center justify-between gap-3">
-            <span className="text-muted-foreground">Access</span>
-            <span className="font-medium text-foreground">{formatInviteRole(preview.role)}</span>
-          </div>
-          <div className="flex items-center justify-between gap-3">
-            <span className="text-muted-foreground">Expires</span>
-            <span className="inline-flex items-center gap-1.5 font-medium text-foreground">
-              <Clock className="size-3.5 text-primary" aria-hidden />
-              {formatInviteExpiry(preview.expiresAt)}
-            </span>
-          </div>
+          {showInviter ? (
+            <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+              <span className="text-muted-foreground">Invited by</span>
+              <span className="font-medium text-foreground">{preview.inviterName}</span>
+            </div>
+          ) : null}
         </div>
 
-        <p className="text-center text-xs text-muted-foreground">
-          Sign in or create an account with{" "}
-          <span className="font-medium text-foreground">{preview.invitedEmail}</span> to join.
+        <p className="text-center text-sm leading-relaxed text-muted-foreground">
+          Please log in or create an account to continue.
         </p>
 
-        <div className="flex flex-col gap-2 sm:flex-row">
-          <Button asChild className="w-full gap-2 shadow-md shadow-primary/20">
+        <div className="flex flex-col gap-2.5">
+          <Button asChild className="h-11 w-full gap-2 shadow-md shadow-primary/25">
             <Link href={loginHref}>
               <LogIn className="size-4" aria-hidden />
               Log in
             </Link>
           </Button>
-          <Button asChild variant="outline" className="w-full gap-2">
+          <Button asChild variant="outline" className="h-11 w-full gap-2 border-border/70 bg-background/50">
             <Link href={registerHref}>
               <UserPlus className="size-4" aria-hidden />
               Create account
             </Link>
+          </Button>
+        </div>
+      </div>
+    </InviteCard>
+  )
+}
+
+function InvitePreviewFallbackCard({
+  loginHref,
+  registerHref,
+  onRetry,
+  isRetrying,
+}: {
+  loginHref: string
+  registerHref: string
+  onRetry: () => void
+  isRetrying: boolean
+}) {
+  return (
+    <InviteCard>
+      <InviteBrandHeader title="Workspace invitation" />
+      <div className="space-y-6">
+        <InviteNeutralNotice
+          title="Continue to accept your invite"
+          body="Sign in or create an account with the email this invitation was sent to. We’ll verify the invite after you authenticate."
+        />
+        <div className="flex flex-col gap-2.5">
+          <Button asChild className="h-11 w-full gap-2 shadow-md shadow-primary/25">
+            <Link href={loginHref}>
+              <LogIn className="size-4" aria-hidden />
+              Log in
+            </Link>
+          </Button>
+          <Button asChild variant="outline" className="h-11 w-full gap-2 border-border/70 bg-background/50">
+            <Link href={registerHref}>
+              <UserPlus className="size-4" aria-hidden />
+              Create account
+            </Link>
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            className="h-10 w-full gap-2 text-muted-foreground"
+            onClick={onRetry}
+            disabled={isRetrying}
+          >
+            {isRetrying ? (
+              <Loader2 className="size-4 animate-spin" aria-hidden />
+            ) : (
+              <RefreshCw className="size-4" aria-hidden />
+            )}
+            Reload invitation
           </Button>
         </div>
       </div>
@@ -378,17 +453,14 @@ function WrongAccountCard({
 }) {
   return (
     <InviteCard>
-      <InviteBrandHeader />
+      <InviteBrandHeader title="Wrong account" />
       <div className="space-y-4">
         <div className="flex items-start gap-2 rounded-xl border border-amber-500/30 bg-amber-500/8 p-4 text-amber-900 dark:text-amber-200">
           <ShieldAlert className="mt-0.5 size-4 shrink-0" aria-hidden />
           <div className="space-y-1 text-sm">
-            <p className="font-medium">Wrong account</p>
+            <p className="font-medium">This invitation was sent to {invitedEmail}</p>
             <p className="text-xs leading-relaxed opacity-90">
-              This invitation was sent to{" "}
-              <span className="font-semibold">{invitedEmail}</span>. You&apos;re signed in as{" "}
-              <span className="font-semibold">{currentEmail || "another account"}</span>. Please log in with the
-              correct account.
+              You&apos;re signed in as {currentEmail || "another account"}. Please log in with the correct account.
             </p>
           </div>
         </div>
@@ -412,9 +484,11 @@ function WrongAccountCard({
 function InviteTerminalCard({
   kind,
   preview,
+  loginHref,
 }: {
   kind: InviteTerminalState
   preview?: InvitePreview
+  loginHref?: string
 }) {
   const copy: Record<InviteTerminalState, { title: string; body: string }> = {
     invalid: {
@@ -432,7 +506,7 @@ function InviteTerminalCard({
     already_accepted: {
       title: "Already accepted",
       body: preview
-        ? `This invitation to ${preview.workspaceName} was already used. Sign in to open the workspace.`
+        ? `This invitation to ${preview.workspaceName} was already used.`
         : "This invitation was already accepted.",
     },
   }
@@ -448,6 +522,10 @@ function InviteTerminalCard({
             <Button asChild size="sm">
               <Link href={workspaceDashboardPath(preview)}>Open workspace</Link>
             </Button>
+          ) : loginHref && kind === "already_accepted" ? (
+            <Button asChild size="sm">
+              <Link href={loginHref}>Log in</Link>
+            </Button>
           ) : (
             <Button asChild variant="outline" size="sm">
               <Link href="/">Back to home</Link>
@@ -456,6 +534,15 @@ function InviteTerminalCard({
         }
       />
     </InviteCard>
+  )
+}
+
+function InviteNeutralNotice({ title, body }: { title: string; body: string }) {
+  return (
+    <div className="rounded-xl border border-primary/15 bg-primary/5 p-4 text-sm">
+      <p className="font-medium text-foreground">{title}</p>
+      <p className="mt-1.5 text-xs leading-relaxed text-muted-foreground">{body}</p>
+    </div>
   )
 }
 
